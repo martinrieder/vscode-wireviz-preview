@@ -11,44 +11,35 @@ Create a comprehensive JSON Schema file that validates WireViz YAML structure an
 
 ## Implementation
 
+The initial implementation of the WireViz JSON Schema has been created at `schemas/wireviz-schema.json`.
+
+This schema file includes:
+
+- **Top-level properties**: connectors, cables, connections, metadata, options, tweak, additional_bom_items
+- **Connector properties**: type, subtype, pincount, pins, pinlabels, pincolors, color, bgcolor, bgcolor_title, style, category, show_name, show_pincount, hide_disconnected_pins, loops, image, notes, manufacturer, mpn, pn, supplier, spn, ignore_in_bom, additional_components
+- **Cable properties**: category, type, gauge, gauge_unit, show_equiv, length, length_unit, colors, color_code, wirecount, wirelabels, shield, show_name, show_wirecount, show_wirenumbers, color, bgcolor, bgcolor_title, image, notes, manufacturer, mpn, pn, supplier, spn, ignore_in_bom, additional_components
+- **Connection sets**: Support for designators, pin/wire references, arrays, objects, and special connection symbols (--, <--, <-->, -->, ==, <==, <==>, ==>, <=>)
+- **Additional definitions**: color codes, color modes, images, additional components, BOM items
+- **Flexibility**: Top-level additionalProperties allowed for templates and future extensions
+
+The schema is based on the analysis of:
+- WireViz DataClasses.py and Harness.py source code
+- The YAML schema attached to wireviz/WireViz#348
+- The official WireViz syntax documentation
+- Example files from the WireViz repository
+
 ### File Location
-Create the file at: `schemas/wireviz-schema.json`
+`schemas/wireviz-schema.json`
 
-### Schema Structure
+For the complete schema implementation, see the actual file in the repository.
 
-The schema should include:
+## Next Steps
 
-1. **Top-level properties**:
-   - `connectors` (object): Dictionary of connector definitions
-   - `cables` (object): Dictionary of cable definitions
-   - `connections` (array): List of connection sets
-   - `metadata` (object, optional): Harness metadata
-   - `options` (object, optional): Global options
-   - `tweak` (object, optional): Graphviz tweaking options
-   - `additional_bom_items` (array, optional): Additional BOM entries
+See the remaining implementation guides in the docs/ directory:
 
-2. **Connector properties**:
-   - `type` (string, optional)
-   - `subtype` (string, optional)
-   - `pinlabels` (array of strings, optional)
-   - `pins` (array of integers/strings, optional)
-   - `pincount` (integer, optional)
-   - `color` (string, optional)
-   - `image` (object, optional)
-   - `notes` (string, optional)
-   - `manufacturer` (string, optional)
-   - `mpn` (string, optional)
-   - `pn` (string, optional)
-   - `supplier` (string, optional)
-   - `spn` (string, optional)
-   - `style` (string, optional)
-   - `show_name` (boolean, optional)
-   - `show_pincount` (boolean, optional)
-   - `hide_disconnected_pins` (boolean, optional)
-   - `bgcolor` (string, optional)
-   - `bgcolor_title` (string, optional)
-   - `loops` (array, optional)
-   - `pincolors` (array, optional)
+- [docs/02-update-package-json.md](docs/02-update-package-json.md) - Register the schema
+- [docs/03-modify-extension.md](docs/03-modify-extension.md) - Add validation and diagnostics
+- [docs/04-add-dependency.md](docs/04-add-dependency.md) - Add js-yaml dependency   - `pincolors` (array, optional)
    - `ignore_in_bom` (boolean, optional)
    - `additional_components` (array, optional)
 
