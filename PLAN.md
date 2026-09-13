@@ -10,21 +10,43 @@ Implement YAML syntax validation for WireViz files in the VSCode extension to ca
    - Create a comprehensive JSON Schema file based on WireViz syntax specification
    - Register the schema in package.json for YAML files
    - Enable conditional activation based on file content detection (presence of connectors:, cables:, connections: keys)
+   - See [Step 1: Create schemas/wireviz-schema.json](docs/01-create-schema.md)
 
 2. **Add Pre-Execution Validation**
    - Integrate a YAML parser (js-yaml) to validate syntax before running WireViz
    - Check for required WireViz structure elements
    - Detect common issues (missing sections, invalid types, malformed references)
    - Display validation errors as diagnostic markers in the editor
+   - See [Step 3: Modify extension.ts](docs/03-modify-extension.md)
 
-3. **Benefits**
+3. **Register Schema in package.json**
+   - Add yamlValidation contribution point
+   - Configure file patterns for WireViz files
+   - Ensure schema is bundled with the extension
+   - See [Step 2: Update package.json](docs/02-update-package-json.md)
+
+4. **Add YAML Parser Dependency**
+   - Add js-yaml to package.json dependencies
+   - Install and verify the dependency
+   - See [Step 4: Add js-yaml Dependency](docs/04-add-dependency.md)
+
+### Implementation Steps
+
+See the detailed implementation guides in the docs/ directory:
+
+- [docs/01-create-schema.md](docs/01-create-schema.md) - Create the JSON Schema file
+- [docs/02-update-package-json.md](docs/02-update-package-json.md) - Register the schema
+- [docs/03-modify-extension.md](docs/03-modify-extension.md) - Add validation and diagnostics
+- [docs/04-add-dependency.md](docs/04-add-dependency.md) - Add js-yaml dependency
+
+### Benefits
    - Catches syntax errors before WireViz execution
    - Provides inline error markers while editing
    - Enables code completion for WireViz-specific fields
    - Works independently of WireViz version or changes
    - Improves user experience with immediate feedback
 
-4. **Dependencies**
+### Dependencies
    - Add js-yaml dependency for YAML parsing
    - No changes required to WireViz itself
 
