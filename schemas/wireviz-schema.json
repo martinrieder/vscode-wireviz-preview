@@ -5,6 +5,7 @@
   "description": "Schema for validating WireViz YAML configuration files. Based on WireViz v0.4+ syntax.",
   "type": "object",
   "additionalProperties": true,
+  "required": [],
   "properties": {
     "connectors": {
       "type": "object",
@@ -435,59 +436,55 @@
       },
       "additionalProperties": false
     },
-    "connectionItem": {
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Designator (connector or cable name)"
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": ["string", "integer"]
-          },
-          "description": "List of pins/wires"
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "type": ["string", "array", "integer"]
-          },
-          "description": "Map of designator to pin/wire references"
-        }
-      ]
+    "connectionDesignator": {
+      "type": "string",
+      "pattern": "^(?!(--|<--|<-->|-->|==|<==|<==>|==>|<=>)$).*$",
+      "description": "Component designator/name (connector or cable), excluding connection symbols"
+    },
+    "connectionPins": {
+      "type": "array",
+      "items": {
+        "type": ["string", "integer"]
+      },
+      "description": "List of pins/wires"
+    },
+    "connectionMap": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Map of designator to pin/wire references"
     },
     "connectionSymbol": {
       "type": "string",
       "enum": ["--", "<--", "<-->", "-->", "==", "<==", "<==>", "==>", "<=>"],
       "description": "Connection arrow symbols"
     },
+    "connectionItem": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/connectionDesignator"
+        },
+        {
+          "$ref": "#/definitions/connectionPins"
+        },
+        {
+          "$ref": "#/definitions/connectionMap"
+        }
+      ],
+      "description": "A connection item (designator, pin list, or designator-pin map)"
+    },
     "connectionSet": {
       "type": "array",
       "items": {
         "oneOf": [
           {
-            "$ref": "#/definitions/connectionItem"
-          },
-          {
             "$ref": "#/definitions/connectionSymbol"
           },
           {
-            "type": "array",
-            "items": {
-              "oneOf": [
-                {
-                  "$ref": "#/definitions/connectionSymbol"
-                },
-                {
-                  "type": ["string", "integer"]
-                }
-              ]
-            }
+            "$ref": "#/definitions/connectionItem"
           }
         ]
       },
-      "description": "A set of connections (alternating connectors and cables/wires)"
+      "description": "A set of connections (alternating connectors, cables, and connection symbols)"
     },
     "metadata": {
       "type": "object",
