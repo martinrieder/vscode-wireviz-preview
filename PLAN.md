@@ -4,53 +4,54 @@
 
 Implement YAML syntax validation for WireViz files in the VSCode extension to catch errors before execution and provide real-time feedback while editing.
 
-### Proposed Implementation
+## Implementation Status
 
-1. **Add JSON Schema for WireViz YAML**
+- **Step 1: JSON Schema** - ✅ COMPLETE - Schema file exists at `schemas/wireviz-schema.json`
+- **Step 2: Dynamic Schema Registration** - ☐ PENDING - Register schema via vscode-yaml registerContributor API
+- **Step 3: Pre-Execution Validation** - ☐ PENDING - Add YAML parsing and validation to extension.ts
+- **Step 4: js-yaml Dependency** - ✅ COMPLETE - Already in package.json, no action needed
+
+## Implementation Steps
+
+### 1. Add JSON Schema for WireViz YAML
    - ✅ Create a comprehensive JSON Schema file based on WireViz syntax specification
    - Register the schema dynamically using vscode-yaml's registerContributor API
    - Enable content-based activation using WireViz-specific detection logic
    - See [Step 1: Create schemas/wireviz-schema.json](docs/01-create-schema.md)
 
-2. **Add Pre-Execution Validation**
+### 2. Register Dynamic Schema via vscode-yaml API
+   - Use registerContributor API from vscode-yaml extension for dynamic schema association
+   - Implement content-based detection to identify WireViz files
+   - Apply schema only when WireViz content is detected (connectors:, cables:, connections: keys)
+   - See [Step 2: Update extension.ts to Register Dynamic Schema](docs/02-update-package-json.md)
+
+### 3. Add Pre-Execution Validation
    - Integrate a YAML parser (js-yaml) to validate syntax before running WireViz
    - Check for required WireViz structure elements
    - Detect common issues (missing sections, invalid types, malformed references)
    - Display validation errors as diagnostic markers in the editor
    - See [Step 3: Modify extension.ts](docs/03-modify-extension.md)
 
-3. **Register Dynamic Schema via vscode-yaml API**
-   - Use registerContributor API from vscode-yaml extension for dynamic schema association
-   - Implement content-based detection to identify WireViz files
-   - Apply schema only when WireViz content is detected (connectors:, cables:, connections: keys)
-   - See [Step 2: Update extension.ts to Register Dynamic Schema](docs/02-update-package-json.md)
+## Notes on Implementation Order
 
-4. **Add YAML Parser Dependency**
-   - Add js-yaml to package.json dependencies
-   - Install and verify the dependency
-   - See [Step 4: Add js-yaml Dependency](docs/04-add-dependency.md)
+Steps 2 and 3 both modify `extension.ts` but serve different purposes:
+- **Step 2** provides schema association for VSCode's YAML language server (autocomplete, hover, validation in editor)
+- **Step 3** provides pre-execution validation to catch errors before running WireViz
 
-### Implementation Steps
+These can be implemented in either order, but Step 2 provides immediate value for users editing YAML files.
 
-See the detailed implementation guides in the docs/ directory:
-
-- [docs/01-create-schema.md](docs/01-create-schema.md) - Create the JSON Schema file
-- [docs/02-update-package-json.md](docs/02-update-package-json.md) - Register the schema
-- [docs/03-modify-extension.md](docs/03-modify-extension.md) - Add validation and diagnostics
-- [docs/04-add-dependency.md](docs/04-add-dependency.md) - Add js-yaml dependency
-
-### Benefits
+## Benefits
    - Catches syntax errors before WireViz execution
    - Provides inline error markers while editing
    - Enables code completion for WireViz-specific fields
    - Works independently of WireViz version or changes
    - Improves user experience with immediate feedback
 
-### Dependencies
-   - Add js-yaml dependency for YAML parsing
+## Dependencies
+   - js-yaml dependency already exists in package.json (added previously)
    - No changes required to WireViz itself
 
-### Related Issues
+## Related Issues
 - nanangp/vscode-wireviz-preview#7 - Linking WireViz output messages to YAML input
 - wireviz/WireViz#348 - YAML Schema validation for syntax compatibility check
 
