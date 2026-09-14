@@ -8,8 +8,8 @@ Implement YAML syntax validation for WireViz files in the VSCode extension to ca
 
 1. **Add JSON Schema for WireViz YAML**
    - ✅ Create a comprehensive JSON Schema file based on WireViz syntax specification
-   - Register the schema in package.json for YAML files
-   - Enable conditional activation based on file content detection (presence of connectors:, cables:, connections: keys)
+   - Register the schema dynamically using vscode-yaml's registerContributor API
+   - Enable content-based activation using WireViz-specific detection logic
    - See [Step 1: Create schemas/wireviz-schema.json](docs/01-create-schema.md)
 
 2. **Add Pre-Execution Validation**
@@ -19,11 +19,11 @@ Implement YAML syntax validation for WireViz files in the VSCode extension to ca
    - Display validation errors as diagnostic markers in the editor
    - See [Step 3: Modify extension.ts](docs/03-modify-extension.md)
 
-3. **Register Schema in package.json**
-   - Add yamlValidation contribution point
-   - Configure file patterns for WireViz files
-   - Ensure schema is bundled with the extension
-   - See [Step 2: Update package.json](docs/02-update-package-json.md)
+3. **Register Dynamic Schema via vscode-yaml API**
+   - Use registerContributor API from vscode-yaml extension for dynamic schema association
+   - Implement content-based detection to identify WireViz files
+   - Apply schema only when WireViz content is detected (connectors:, cables:, connections: keys)
+   - See [Step 2: Update extension.ts to Register Dynamic Schema](docs/02-update-package-json.md)
 
 4. **Add YAML Parser Dependency**
    - Add js-yaml to package.json dependencies
