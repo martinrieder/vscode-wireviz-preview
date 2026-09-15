@@ -50,31 +50,36 @@ async function registerWireVizYamlContributor(context: vscode.ExtensionContext) 
 			registerContributor: (schema: string, onRequestSchemaURI: (resource: string) => string | undefined, onRequestSchemaContent: (schemaUri: string) => string | undefined) => void;
 		}>("redhat.vscode-yaml");
 		
-		if (yamlExtension) {
-			await yamlExtension.activate();
-			
-			// Read the schema content once and cache it
-			const schemaPath = vscode.Uri.joinPath(context.extensionUri, "schemas", "wireviz-schema.json");
-			const schemaContent = await vscode.workspace.fs.readFile(schemaPath);
-			const schemaJSON = Buffer.from(schemaContent).toString("utf-8");
-			
-			// Register the contributor
-			yamlExtension.exports.registerContributor(
-				SCHEMA,
-				onRequestSchemaURI,
-				(schemaUri: string) => {
-					const parsedUri = vscode.Uri.parse(schemaUri);
-					if (parsedUri.scheme !== SCHEMA) {
-						return undefined;
-					}
-					return schemaJSON;
-				}
+		if (!yamlExtension) {
+			vscode.window.showWarningMessage(
+				"WireViz schema requires the 'YAML' extension by Red Hat. Please install it for full functionality."
 			);
-			
-			console.log("WireViz YAML contributor registered successfully");
+			return;
 		}
-	} catch (error) {
-		console.error("Failed to register WireViz YAML contributor:", error);
+		
+		await yamlExtension.activate();
+		
+		// Read the schema content once and cache it
+		const schemaPath = vscode.Uri.joinPath(context.extensionUri, "schemas", "wireviz-schema.json");
+		const schemaContent = await vscode.workspace.fs.readFile(schemaPath);
+		const schemaJSON = Buffer.from(schemaContent).toString("utf-8");
+		
+		// Register the contributor
+		yamlExtension.exports.registerContributor(
+			SCHEMA,
+			onRequestSchemaURI,
+			(schemaUri: string) => {
+				const parsedUri = vscode.Uri.parse(schemaUri);
+				if (parsedUri.scheme !== SCHEMA) {
+					return undefined;
+				}
+				return schemaJSON;
+			}
+		);
+		
+		console.log("WireViz YAML contributor registered successfully");
+	} catch (err) {
+		console.error("Failed to register WireViz schema:", err);
 	}
 }
 
