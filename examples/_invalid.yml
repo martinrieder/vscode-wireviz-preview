@@ -1,2 +1,15 @@
-something:
-  prop1: value
+# This is an intentionally invalid WireViz file
+# It has a connector with an invalid property that should not be allowed
+connectors:
+  X1:
+    type: Test
+    invalid_property: this should fail
+    pincount: 4
+
+cables:
+  W1:
+    colors: [BK, RD]
+
+connections:
+  - - X1: [1-2]
+    - W1: [1-2]

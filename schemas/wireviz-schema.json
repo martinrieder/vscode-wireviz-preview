@@ -1,0 +1,615 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/martinrieder/vscode-wireviz-preview/master/schemas/wireviz-schema.json",
+  "title": "WireViz YAML Schema",
+  "description": "Schema for validating WireViz YAML configuration files. Based on WireViz v0.4+ syntax.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [],
+  "properties": {
+    "connectors": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/connector"
+      },
+      "description": "Dictionary of connector definitions"
+    },
+    "cables": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/cable"
+      },
+      "description": "Dictionary of cable definitions"
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/connectionSet"
+      },
+      "description": "List of connection sets"
+    },
+    "metadata": {
+      "$ref": "#/definitions/metadata",
+      "description": "Harness metadata (optional)"
+    },
+    "options": {
+      "$ref": "#/definitions/options",
+      "description": "Global options (optional)"
+    },
+    "tweak": {
+      "$ref": "#/definitions/tweak",
+      "description": "Graphviz tweaking options (optional)"
+    },
+    "additional_bom_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/additionalBomItem"
+      },
+      "description": "Additional BOM entries (optional)"
+    }
+  },
+  "definitions": {
+    "designator": {
+      "type": "string",
+      "pattern": "^[a-zA-Z\\x80-\\xFF_-][0-9a-zA-Z\\x80-\\xFF_\\.]*$",
+      "description": "Component designator/name pattern"
+    },
+    "color": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "BK", "WH", "GY", "PK", "RD", "OG", "YE", "OL", "GN", "TQ", "LB", "BU",
+            "VT", "BN", "BG", "IV", "SL", "CU", "SN", "SR", "GD"
+          ],
+          "description": "Standard WireViz color codes"
+        },
+        {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{3,6}$",
+          "description": "Hexadecimal color code (3 or 6 digits)"
+        }
+      ]
+    },
+    "colorCode": {
+      "type": "string",
+      "enum": ["DIN", "IEC", "TEL", "TELALT", "T568A", "T568B", "BW"],
+      "description": "Cable color code schemes"
+    },
+    "colorMode": {
+      "type": "string",
+      "enum": ["full", "FULL", "hex", "HEX", "short", "SHORT", "ger", "GER"],
+      "description": "Color display mode"
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "Path to the image file (required)"
+        },
+        "caption": {
+          "type": "string",
+          "description": "Text to display below the image"
+        },
+        "bgcolor": {
+          "$ref": "#/definitions/color",
+          "description": "Background color of entry in diagram component box"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Width in points"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Height in points"
+        },
+        "scale": {
+          "type": "boolean",
+          "description": "Scale the image"
+        },
+        "fixedsize": {
+          "type": "boolean",
+          "description": "Use fixed size"
+        }
+      },
+      "required": ["src"],
+      "additionalProperties": false
+    },
+    "additionalComponent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Type of additional component (required)"
+        },
+        "subtype": {
+          "type": "string",
+          "description": "Additional description (only shown in BOM)"
+        },
+        "qty": {
+          "type": "number",
+          "description": "Quantity to add to BOM (defaults to 1)"
+        },
+        "qty_multiplier": {
+          "type": "string",
+          "description": "Multiplies qty by a feature of the parent component"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Unit of measure"
+        },
+        "pn": {
+          "type": ["string", "integer"],
+          "description": "Internal part number"
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Manufacturer name"
+        },
+        "mpn": {
+          "type": ["string", "integer"],
+          "description": "Manufacturer part number"
+        },
+        "supplier": {
+          "type": "string",
+          "description": "Supplier name"
+        },
+        "spn": {
+          "type": ["string", "integer"],
+          "description": "Supplier part number"
+        },
+        "bgcolor": {
+          "$ref": "#/definitions/color",
+          "description": "Background color of entry in diagram component box"
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+    "connector": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Connector type"
+        },
+        "subtype": {
+          "type": "string",
+          "description": "Connector subtype"
+        },
+        "pincount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of pins"
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "type": ["integer", "string"]
+          },
+          "description": "List of pin identifiers"
+        },
+        "pinlabels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of pin labels"
+        },
+        "pincolors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/color"
+          },
+          "description": "List of pin colors"
+        },
+        "color": {
+          "$ref": "#/definitions/color",
+          "description": "Connector color"
+        },
+        "bgcolor": {
+          "$ref": "#/definitions/color",
+          "description": "Background color of diagram connector box"
+        },
+        "bgcolor_title": {
+          "$ref": "#/definitions/color",
+          "description": "Background color of title in diagram connector box"
+        },
+        "style": {
+          "type": "string",
+          "enum": ["simple"],
+          "description": "Connector style (simple for single pin connectors)"
+        },
+        "category": {
+          "type": "string",
+          "description": "Connector category"
+        },
+        "show_name": {
+          "type": "boolean",
+          "description": "Show connector name in diagram"
+        },
+        "show_pincount": {
+          "type": "boolean",
+          "description": "Show pin count in diagram"
+        },
+        "hide_disconnected_pins": {
+          "type": "boolean",
+          "description": "Hide disconnected pins"
+        },
+        "loops": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": ["integer", "string"]
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "List of exactly two pins to short"
+          },
+          "description": "List of pin pairs to loop/short"
+        },
+        "image": {
+          "$ref": "#/definitions/image",
+          "description": "Connector image"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Connector notes"
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Manufacturer name"
+        },
+        "mpn": {
+          "type": ["string", "integer"],
+          "description": "Manufacturer part number"
+        },
+        "pn": {
+          "type": ["string", "integer"],
+          "description": "Internal part number"
+        },
+        "supplier": {
+          "type": "string",
+          "description": "Supplier name"
+        },
+        "spn": {
+          "type": ["string", "integer"],
+          "description": "Supplier part number"
+        },
+        "ignore_in_bom": {
+          "type": "boolean",
+          "description": "Exclude from BOM"
+        },
+        "additional_components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/additionalComponent"
+          },
+          "description": "Additional components for this connector"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cable": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": ["bundle"],
+          "description": "Cable category (bundle for multi-wire bundles)"
+        },
+        "type": {
+          "type": "string",
+          "description": "Cable type"
+        },
+        "gauge": {
+          "type": ["string", "number"],
+          "description": "Cable gauge (number, or number with unit like '0.14 mm2' or '20 AWG')"
+        },
+        "gauge_unit": {
+          "type": "string",
+          "description": "Gauge unit (e.g., 'mm2', 'AWG')"
+        },
+        "show_equiv": {
+          "type": "boolean",
+          "description": "Show equivalent gauge in different unit"
+        },
+        "length": {
+          "type": ["string", "number"],
+          "description": "Cable length (number, or number with unit like '0.2 m' or '10 cm')"
+        },
+        "length_unit": {
+          "type": "string",
+          "description": "Length unit (e.g., 'm', 'cm', 'ft')"
+        },
+        "colors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/color"
+          },
+          "description": "List of wire colors"
+        },
+        "color_code": {
+          "$ref": "#/definitions/colorCode",
+          "description": "Color code scheme for auto-generating colors"
+        },
+        "wirecount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of wires"
+        },
+        "wirelabels": {
+          "type": "array",
+          "items": {
+            "type": ["string", "integer"]
+          },
+          "description": "List of wire labels"
+        },
+        "shield": {
+          "type": ["boolean", "string"],
+          "description": "Shield (boolean, or color for shield color)"
+        },
+        "show_name": {
+          "type": "boolean",
+          "description": "Show cable name in diagram"
+        },
+        "show_wirecount": {
+          "type": "boolean",
+          "description": "Show wire count in diagram"
+        },
+        "show_wirenumbers": {
+          "type": "boolean",
+          "description": "Show wire numbers in diagram"
+        },
+        "color": {
+          "$ref": "#/definitions/color",
+          "description": "Cable color"
+        },
+        "bgcolor": {
+          "$ref": "#/definitions/color",
+          "description": "Background color of diagram cable box"
+        },
+        "bgcolor_title": {
+          "$ref": "#/definitions/color",
+          "description": "Background color of title in diagram cable box"
+        },
+        "image": {
+          "$ref": "#/definitions/image",
+          "description": "Cable image"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Cable notes"
+        },
+        "manufacturer": {
+          "type": ["string", "array"],
+          "items": {
+            "type": "string"
+          },
+          "description": "Manufacturer name (can be list for bundles)"
+        },
+        "mpn": {
+          "type": ["string", "integer", "array"],
+          "items": {
+            "type": ["string", "integer"]
+          },
+          "description": "Manufacturer part number (can be list for bundles)"
+        },
+        "pn": {
+          "type": ["string", "integer", "array"],
+          "items": {
+            "type": ["string", "integer"]
+          },
+          "description": "Internal part number (can be list for bundles)"
+        },
+        "supplier": {
+          "type": ["string", "array"],
+          "items": {
+            "type": "string"
+          },
+          "description": "Supplier name (can be list for bundles)"
+        },
+        "spn": {
+          "type": ["string", "integer", "array"],
+          "items": {
+            "type": ["string", "integer"]
+          },
+          "description": "Supplier part number (can be list for bundles)"
+        },
+        "ignore_in_bom": {
+          "type": "boolean",
+          "description": "Exclude from BOM"
+        },
+        "additional_components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/additionalComponent"
+          },
+          "description": "Additional components for this cable"
+        }
+      },
+      "additionalProperties": false
+    },
+    "connectionDesignator": {
+      "type": "string",
+      "pattern": "^(?!(--|<--|<-->|-->|==|<==|<==>|==>|<=>)$).*$",
+      "description": "Component designator/name (connector or cable), excluding connection symbols"
+    },
+    "connectionPins": {
+      "type": "array",
+      "items": {
+        "type": ["string", "integer"]
+      },
+      "description": "List of pins/wires"
+    },
+    "connectionMap": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Map of designator to pin/wire references"
+    },
+    "connectionSymbol": {
+      "type": "string",
+      "enum": ["--", "<--", "<-->", "-->", "==", "<==", "<==>", "==>", "<=>"],
+      "description": "Connection arrow symbols"
+    },
+    "connectionItem": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/connectionDesignator"
+        },
+        {
+          "$ref": "#/definitions/connectionPins"
+        },
+        {
+          "$ref": "#/definitions/connectionMap"
+        }
+      ],
+      "description": "A connection item (designator, pin list, or designator-pin map)"
+    },
+    "connectionSet": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/definitions/connectionSymbol"
+          },
+          {
+            "$ref": "#/definitions/connectionItem"
+          }
+        ]
+      },
+      "description": "A set of connections (alternating connectors, cables, and connection symbols)"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "object", "array"]
+      },
+      "description": "Harness metadata (any key-value pairs)"
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "bgcolor": {
+          "$ref": "#/definitions/color",
+          "description": "Default background color"
+        },
+        "bgcolor_node": {
+          "$ref": "#/definitions/color",
+          "description": "Background color for nodes"
+        },
+        "bgcolor_connector": {
+          "$ref": "#/definitions/color",
+          "description": "Background color for connectors"
+        },
+        "bgcolor_cable": {
+          "$ref": "#/definitions/color",
+          "description": "Background color for cables"
+        },
+        "bgcolor_bundle": {
+          "$ref": "#/definitions/color",
+          "description": "Background color for bundles"
+        },
+        "color_mode": {
+          "$ref": "#/definitions/colorMode",
+          "description": "How to display colors as text"
+        },
+        "fontname": {
+          "type": "string",
+          "description": "Font name for diagram"
+        },
+        "mini_bom_mode": {
+          "type": "boolean",
+          "description": "Show only BOM reference in diagram"
+        },
+        "template_separator": {
+          "type": "string",
+          "description": "Character to split template and designator for autogenerated components"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tweak": {
+      "type": "object",
+      "properties": {
+        "override": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": ["string", "null"]
+            }
+          },
+          "description": "Override Graphviz attributes"
+        },
+        "append": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "String or list of strings to append to Graphviz output"
+        }
+      },
+      "additionalProperties": false
+    },
+    "additionalBomItem": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Description of the BOM item (required)"
+        },
+        "qty": {
+          "type": "number",
+          "description": "Quantity (defaults to 1)"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Unit of measure"
+        },
+        "designators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of designators"
+        },
+        "pn": {
+          "type": ["string", "integer"],
+          "description": "Internal part number"
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Manufacturer name"
+        },
+        "mpn": {
+          "type": ["string", "integer"],
+          "description": "Manufacturer part number"
+        },
+        "supplier": {
+          "type": "string",
+          "description": "Supplier name"
+        },
+        "spn": {
+          "type": ["string", "integer"],
+          "description": "Supplier part number"
+        }
+      },
+      "required": ["description"],
+      "additionalProperties": false
+    }
+  }
+}
