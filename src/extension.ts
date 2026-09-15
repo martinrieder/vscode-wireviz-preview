@@ -1,7 +1,7 @@
 import aspawn from "await-spawn";
 import path from "path";
 import semver from "semver";
-import vscode, {window, TextDocument, Uri, WebviewOptions} from "vscode";
+import vscode, {window, TextDocument, Uri, WebviewOptions, Extension} from "vscode";
 
 enum MsgType {
 	Debug = "DEBUG",
@@ -27,11 +27,105 @@ type ConfiguredArgs = {
 let viewPanel: vscode.WebviewPanel | undefined;
 let isRunning = false;
 
+/** Custom schema URI for WireViz */
+const SCHEMA = "wireviz" as const;
+const SCHEMA_URI = `${SCHEMA}://schema`;
+
 export async function activate(context: vscode.ExtensionContext) {
+	// Register WireViz schema contributor with vscode-yaml extension
+	registerWireVizYamlContributor(context);
+	
 	context.subscriptions.push(
 		vscode.commands.registerCommand("wireviz.showPreview", async() => await showPreview()),
 		vscode.workspace.onDidSaveTextDocument(onDocumentSaved)
 	);
+}
+
+/**
+ * Registers a WireViz schema contributor with the vscode-yaml extension
+ * to provide dynamic schema association based on file content.
+ */
+async function registerWireVizYamlContributor(context: vscode.ExtensionContext) {
+	try {
+		const yamlExtension = vscode.extensions.getExtension<{
+			registerContributor: (schema: string, onRequestSchemaURI: (resource: string) => string | undefined, onRequestSchemaContent: (schemaUri: string) => string | undefined) => void;
+		}>("redhat.vscode-yaml");
+		
+		if (!yamlExtension) {
+			console.log("redhat.vscode-yaml extension not found. WireViz schema registration skipped.");
+			return;
+		}
+		
+		await yamlExtension.activate();
+		
+		// Read the schema content once and cache it
+		const schemaPath = vscode.Uri.joinPath(context.extensionUri, "schemas", "wireviz-schema.json");
+		const schemaContent = await vscode.workspace.fs.readFile(schemaPath);
+		const schemaJSON = Buffer.from(schemaContent).toString("utf-8");
+		
+		// Register the contributor
+		yamlExtension.exports.registerContributor(
+			SCHEMA_URI,
+			onRequestSchemaURI,
+			onRequestSchemaContent
+		);
+		
+		console.log("WireViz YAML contributor registered successfully");
+	} catch (err) {
+		console.error("Failed to register WireViz schema:", err);
+	}
+}
+
+/**
+ * Callback for vscode-yaml to determine the schema URI for a given resource.
+ * Uses detection logic based on WireViz file structure.
+ */
+async function onRequestSchemaURI(resource: string): Promise<string | undefined> {
+	const uri = vscode.Uri.parse(resource);
+	
+	// Only consider YAML files
+	if (uri.scheme !== "file" || (!resource.endsWith(".yaml") && !resource.endsWith(".yml"))) {
+		return undefined;
+	}
+	
+	try {
+		const content = await vscode.workspace.fs.readFile(uri);
+		const text = Buffer.from(content).toString("utf-8");
+		
+		// Check for top-level WireViz keys (case-insensitive)
+		const hasConnectors = /^\s*connectors:/m.test(text);
+		const hasCables = /^\s*cables:/m.test(text);
+		const hasConnections = /^\s*connections:/m.test(text);
+		
+		// Count defined components (connectors or cables)
+		const componentCount = (hasConnectors ? 1 : 0) + (hasCables ? 1 : 0);
+		
+		// Rule 1: At least one connector or cable is defined
+		if (componentCount >= 1) {
+			return SCHEMA_URI;
+		}
+		
+		// Rule 2: If connections are defined, at least two components must exist
+		if (hasConnections && componentCount >= 2) {
+			return SCHEMA_URI;
+		}
+		
+	} catch (err) {
+		console.error(`Failed to read file: ${resource}`, err);
+	}
+	
+	return undefined;
+}
+
+/**
+ * Callback for vscode-yaml to provide schema content for a given schema URI.
+ */
+function onRequestSchemaContent(schemaUri: string): string | undefined {
+	const parsedUri = vscode.Uri.parse(schemaUri);
+	if (parsedUri.scheme !== SCHEMA || parsedUri.authority !== "schema") {
+		return undefined;
+	}
+	return schemaJSON;
 }
 
 export async function deactivate() {
