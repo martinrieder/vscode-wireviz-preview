@@ -85,10 +85,7 @@
     "lint": "eslint src --ext ts"
   },
   "dependencies": {
-    "ajv": "^8.20.0",
     "await-spawn": "4.x",
-    "js-yaml": "^4.1.0",
-    "minimist": "^1.2.8",
     "semver": "7.x"
   },
   "devDependencies": {
@@ -98,6 +95,9 @@
     "@typescript-eslint/eslint-plugin": "6.x",
     "@typescript-eslint/parser": "6.x",
     "@vscode/test-electron": "2.x",
+    "ajv": "^8.20.0",
+    "js-yaml": "^4.1.0",
+    "minimist": "^1.2.8",
     "esbuild": "^0.21.0",
     "eslint": "8.x",
     "glob": "10.x",
