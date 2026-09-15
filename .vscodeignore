@@ -3,6 +3,7 @@
 
 # Whitelist what you need
 !out/*.js
+!schemas/wireviz-schema.json
 !img/icon.png
 !package.json
 !README.md

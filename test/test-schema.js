@@ -7,7 +7,7 @@
  * This script validates that the schema correctly accepts all valid WireViz YAML files.
  * 
  * Usage:
- *   node scripts/test-schema.js [--path <path-to-examples>] [--schema <path-to-schema>]
+ *   node test/test-schema.js [--path <path-to-examples>] [--schema <path-to-schema>]
  * 
  * Options:
  *   --path     Path to directory containing WireViz YAML examples (default: ../../WireViz/examples)
@@ -30,7 +30,7 @@ WireViz JSON Schema Validation Test Script
 Tests the WireViz JSON schema against all example YAML files.
 
 Usage:
-  node scripts/test-schema.js [options]
+  node test/test-schema.js [options]
 
 Options:
   --path     Path to directory containing WireViz YAML examples
@@ -41,9 +41,9 @@ Options:
   --quiet    Only show failures, not successes
 
 Examples:
-  node scripts/test-schema.js
-  node scripts/test-schema.js --path /path/to/examples
-  node scripts/test-schema.js --schema custom-schema.json
+  node test/test-schema.js
+  node test/test-schema.js --path /path/to/examples
+  node test/test-schema.js --schema custom-schema.json
 `);
   process.exit(0);
 }
