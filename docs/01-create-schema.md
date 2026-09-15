@@ -37,9 +37,8 @@ For the complete schema implementation, see the actual file in the repository.
 
 See the remaining implementation guides in the docs/ directory:
 
-- [docs/02-update-package-json.md](docs/02-update-package-json.md) - Register the schema
+- [docs/02-register-schema.md](docs/02-register-schema.md) - Register the schema
 - [docs/03-modify-extension.md](docs/03-modify-extension.md) - Add validation and diagnostics
-- [docs/04-add-dependency.md](docs/04-add-dependency.md) - Add js-yaml dependency   
 
 
 ## Validation
