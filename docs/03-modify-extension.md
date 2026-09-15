@@ -16,17 +16,7 @@ Modify extension.ts to add:
 
 ### 1. Add Dependencies
 
-First, add the js-yaml dependency to package.json:
-
-```json
-{
-  "dependencies": {
-    "await-spawn": "4.x",
-    "js-yaml": "^4.1.0",
-    "semver": "7.x"
-  }
-}
-```
+The `js-yaml` dependency is already present in `package.json` (see PLAN Step 4); no changes to `package.json` are required for this step.
 
 ### 2. Import Required Modules
 
@@ -181,6 +171,25 @@ function validateWirevizStructure(data: any, doc: TextDocument): Diagnostic[] {
 		return diagnostics;
 	}
 	
+	// Per syntax.md, a harness is described by the connectors, cables and
+	// connections sections. If any are absent, flag them as missing rather
+	// than silently skipping validation.
+	for (const section of wirevizKeys) {
+		if (!keys.includes(section)) {
+			const line = findLineNumber(doc, section);
+			const range = new vscode.Range(
+				new vscode.Position(line >= 0 ? line : 0, 0),
+				new vscode.Position(line >= 0 ? line : 0, section.length)
+			);
+			diagnostics.push({
+				severity: DiagnosticSeverity.Warning,
+				message: `Missing WireViz section: '${section}'`,
+				range,
+				source: "wireviz"
+			});
+		}
+	}
+	
 	// Validate connectors
 	if (data.connectors && typeof data.connectors === "object") {
 		validateConnectors(data.connectors, diagnostics, doc);
@@ -191,9 +200,27 @@ function validateWirevizStructure(data: any, doc: TextDocument): Diagnostic[] {
 		validateCables(data.cables, diagnostics, doc);
 	}
 	
-	// Validate connections
-	if (data.connections && Array.isArray(data.connections)) {
-		validateConnections(data.connections, data.connectors, data.cables, diagnostics, doc);
+	// Validate connections. Per syntax.md `connections:` must be a list of
+	// connection sets; a mapping is a structural error, not something to
+	// silently skip.
+	if (data.connections !== undefined) {
+		if (!Array.isArray(data.connections)) {
+			const line = findLineNumber(doc, "connections");
+			if (line >= 0) {
+				diagnostics.push({
+					severity: DiagnosticSeverity.Error,
+					message: "'connections' must be a list of connection sets",
+					range: new vscode.Range(line, 0, line, "connections:".length),
+					source: "wireviz"
+				});
+			}
+		} else {
+			const templateSeparator = data.options?.template_separator ?? ".";
+			validateConnections(
+				data.connections, data.connectors, data.cables,
+				templateSeparator, diagnostics, doc
+			);
+		}
 	}
 	
 	return diagnostics;
@@ -249,7 +276,7 @@ function validateCables(cables: any, diagnostics: Diagnostic[], doc: TextDocumen
 			}
 			continue;
 		}
-		
+
 		// Check for color_code validity
 		if (cable.color_code !== undefined) {
 			const validColorCodes = ["DIN", "IEC", "TEL", "TELALT", "T568A", "T568B", "BW"];
@@ -265,13 +292,131 @@ function validateCables(cables: any, diagnostics: Diagnostic[], doc: TextDocumen
 				}
 			}
 		}
+
+		// Per syntax.md, only the following conductor-info combinations are
+		// permitted: wirecount only, colors only, or wirecount + color_code.
+		// Using colors together with color_code is invalid.
+		const hasWirecount = cable.wirecount !== undefined;
+		const hasColors = cable.colors !== undefined;
+		const hasColorCode = cable.color_code !== undefined;
+		if (hasColors && hasColorCode) {
+			const line = findPropertyLine(doc, name, "colors") >= 0
+				? findPropertyLine(doc, name, "colors")
+				: findPropertyLine(doc, name, "color_code");
+			if (line >= 0) {
+				diagnostics.push({
+					severity: DiagnosticSeverity.Error,
+					message: `Cable '${name}' cannot specify both 'colors' and 'color_code'. Permitted: colors only, wirecount only, or wirecount + color_code.`,
+					range: new vscode.Range(line, 0, line, 40),
+					source: "wireviz"
+				});
+			}
+		}
+		if (hasWirecount && hasColors) {
+			const line = findPropertyLine(doc, name, "colors") >= 0
+				? findPropertyLine(doc, name, "colors")
+				: findPropertyLine(doc, name, "wirecount");
+			if (line >= 0) {
+				diagnostics.push({
+					severity: DiagnosticSeverity.Warning,
+					message: `Cable '${name}' specifies both 'wirecount' and 'colors'; wirecount is inferred from the colors list length.`,
+					range: new vscode.Range(line, 0, line, 40),
+					source: "wireviz"
+				});
+			}
+		}
 	}
 }
 
-function validateConnections(connections: any[], connectors: any, cables: any, diagnostics: Diagnostic[], doc: TextDocument) {
+
+// Symbols that may appear as a connection item instead of a designator.
+const SINGLE_ARROWS = ["--", "<--", "<-->", "-->"];
+const DOUBLE_ARROWS = ["==", "<==", "<==>", "==>"];
+
+/**
+ * Resolves a connection-item designator to the section it belongs to
+ * ("connectors" | "cables") or undefined when unknown.
+ *
+ * Handles the three forms described in syntax.md:
+ *  - mapping key: `<designator>: <pin|wire|list|s>` -> key is the designator
+ *  - bare string designator: `<designator>` (simple connectors, double-arrow mates)
+ *  - autogeneration: `<template><sep>[instance]`, e.g. `Y.Y1`, `Z.` (unnamed)
+ * The designator may itself be a list `[<designator>, ...]` for parallel
+ * single-pin connectors; in that case every entry must resolve.
+ */
+function resolveDesignator(
+	item: any, connectors: any, cables: any, templateSeparator: string
+): "connectors" | "cables" | undefined {
+	// A list of designators resolves only if every element resolves to the
+	// same section.
+	if (Array.isArray(item)) {
+		let section: "connectors" | "cables" | undefined;
+		for (const sub of item) {
+			const subSection = resolveDesignator(sub, connectors, cables, templateSeparator);
+			if (subSection === undefined) {
+				return undefined;
+			}
+			if (section === undefined) {
+				section = subSection;
+			} else if (section !== subSection) {
+				return undefined;
+			}
+		}
+		return section;
+	}
+
+	// Determine the designator string. A mapping item uses its single key as
+	// the designator; a string item IS the designator.
+	let designator: string | undefined;
+	if (item !== null && typeof item === "object") {
+		const entries = Object.entries(item);
+		if (entries.length === 1) {
+			designator = entries[0][0] as string;
+		}
+	} else if (typeof item === "string") {
+		designator = item;
+	}
+
+	if (designator === undefined) {
+		return undefined;
+	}
+
+	// Arrows are not components; they belong to neither section.
+	if (SINGLE_ARROWS.includes(designator) || DOUBLE_ARROWS.includes(designator)) {
+		return undefined;
+	}
+
+	// Direct lookup first.
+	if (connectors && connectors[designator]) {
+		return "connectors";
+	}
+	if (cables && cables[designator]) {
+		return "cables";
+	}
+
+	// Autogeneration: `<template><sep>[instance]` or `<template><sep>` (unnamed).
+	// The default separator is '.' and may be overridden via options.template_separator.
+	const sepIndex = designator.indexOf(templateSeparator);
+	if (sepIndex > 0) {
+		const template = designator.slice(0, sepIndex);
+		if (template && connectors && connectors[template]) {
+			return "connectors";
+		}
+		if (template && cables && cables[template]) {
+			return "cables";
+		}
+	}
+
+	return undefined;
+}
+
+function validateConnections(
+	connections: any[], connectors: any, cables: any,
+	templateSeparator: string, diagnostics: Diagnostic[], doc: TextDocument
+) {
 	for (let i = 0; i < connections.length; i++) {
 		const connection = connections[i];
-		
+
 		if (!Array.isArray(connection)) {
 			const line = findArrayItemLine(doc, "connections", i);
 			if (line >= 0) {
@@ -284,34 +429,64 @@ function validateConnections(connections: any[], connectors: any, cables: any, d
 			}
 			continue;
 		}
-		
-		// Validate each item in the connection set
+
+		// Validate each item in the connection set and track which section
+		// each item belongs to so we can enforce alternation.
+		let previousSection: "connectors" | "cables" | undefined;
 		for (let j = 0; j < connection.length; j++) {
 			const item = connection[j];
-			
-			// Check if it's a string designator
-			if (typeof item === "string") {
-				// Check if it references a known connector or cable
-				const isSpecialSymbol = ["--", "<--", "<-->", "-->", "==", "<==", "<==>", "==>"].includes(item);
-				const isConnector = connectors && connectors[item];
-				const isCable = cables && cables[item];
-				
-				if (!isSpecialSymbol && !isConnector && !isCable) {
-					const line = findArrayItemLine(doc, "connections", i, j);
-					if (line >= 0) {
-						diagnostics.push({
-							severity: DiagnosticSeverity.Warning,
-							message: `Unknown designator: '${item}'. Not found in connectors or cables`,
-							range: new vscode.Range(line, 0, line, item.length + 2),
-							source: "wireviz"
-						});
-					}
+			const line = findArrayItemLine(doc, "connections", i, j);
+
+			// Resolve the designator for both mapping and string forms,
+			// including autogeneration (`Y.Y1`, `Z.` with template_separator).
+			const section = resolveDesignator(item, connectors, cables, templateSeparator);
+
+			const isArrow = typeof item === "string"
+				? SINGLE_ARROWS.includes(item) || DOUBLE_ARROWS.includes(item)
+				: Array.isArray(item) && item.length > 0 && item.every(
+					(a: any) => typeof a === "string"
+						&& (SINGLE_ARROWS.includes(a) || DOUBLE_ARROWS.includes(a))
+				);
+
+			if (section === undefined && !isArrow) {
+				// Not a component and not an arrow -> unknown designator.
+				const designator = typeof item === "string"
+					? item
+					: (item !== null && typeof item === "object")
+						? Object.keys(item)[0]
+						: undefined;
+				if (designator !== undefined && line >= 0) {
+					diagnostics.push({
+						severity: DiagnosticSeverity.Warning,
+						message: `Unknown designator: '${designator}'. Not found in connectors or cables`,
+						range: new vscode.Range(line, 0, line, designator.length + 2),
+						source: "wireviz"
+					});
 				}
+			}
+
+			// Enforce the alternation rule: connection items must alternatingly
+			// belong to the connectors and cables sections. Arrows sit between
+			// two connector items and are skipped for this check.
+			if (section === "connectors" || section === "cables") {
+				if (previousSection === section && line >= 0) {
+					const designator = typeof item === "string"
+						? item
+						: Object.keys(item)[0];
+					diagnostics.push({
+						severity: DiagnosticSeverity.Warning,
+						message: `Connection items must alternatingly belong to connectors and cables; '${designator}' repeats '${section}'`,
+						range: new vscode.Range(line, 0, line, 20),
+						source: "wireviz"
+					});
+				}
+				previousSection = section;
 			}
 		}
 	}
 }
 ```
+
 
 ### 8. Add Helper Functions
 
@@ -376,49 +551,83 @@ function findLineNumber(doc: TextDocument, keyName: string): number {
 function findArrayItemLine(doc: TextDocument, arrayName: string, index: number, subIndex?: number): number {
 	const text = doc.getText();
 	const lines = text.split("\n");
-	
+
 	let inArray = false;
 	let arrayIndent = 0;
+	let itemIndent = 0;
 	let itemCount = 0;
-	
+
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
-		
+
 		// Check if we're entering the array
 		if (line.includes(arrayName + ":")) {
 			inArray = true;
 			arrayIndent = line.search(/\S/);
 			continue;
 		}
-		
-		// If we're in the array
-		if (inArray) {
-			const currentIndent = line.search(/\S/);
-			
-			// Check if we've left the array
-			if (currentIndent <= arrayIndent && line.trim() !== "" && !line.trim().startsWith("-")) {
-				inArray = false;
-			}
-			
-			// Count array items
-			if (line.trim().startsWith("-")) {
-				if (itemCount === index) {
-					if (subIndex === undefined) {
-						return i;
+
+		if (!inArray) {
+			continue;
+		}
+
+		const trimmed = line.trim();
+		if (trimmed === "") {
+			continue;
+		}
+		const currentIndent = line.search(/\S/);
+
+		// Left the array once we dedent to the array's level (or above) on a
+		// non-array line.
+		if (currentIndent <= arrayIndent && !trimmed.startsWith("-")) {
+			inArray = false;
+			continue;
+		}
+
+		// Top-level connection-set entries start with "-" at the array's
+		// child indentation level.
+		if (trimmed.startsWith("-") && currentIndent > arrayIndent) {
+			if (itemCount === index) {
+				itemIndent = currentIndent;
+				if (subIndex === undefined) {
+					return i;
+				}
+				// Walk forward collecting the sub-items of this connection
+				// set: every following line whose "- " is indented deeper
+				// than the set entry itself. This resolves sub-indices beyond 0.
+				let subCount = 0;
+				for (let j = i; j < lines.length; j++) {
+					const subLine = lines[j];
+					if (subLine.trim() === "") {
+						continue;
 					}
-					// For sub-items, we need to track nested arrays
-					// This is a simplified version
-					if (subIndex === 0) {
-						return i;
+					// A new top-level set entry or a dedent ends the set.
+					if (j > i) {
+						const subIndent = subLine.search(/\S/);
+						if (subLine.trim().startsWith("-") && subIndent <= itemIndent) {
+							// Next connection set starts here; stop.
+							break;
+						}
+						if (subIndent <= arrayIndent) {
+							break;
+						}
+					}
+					if (subLine.trim().startsWith("-")) {
+						if (subCount === subIndex) {
+							return j;
+						}
+						subCount++;
 					}
 				}
-				itemCount++;
+				return -1;
 			}
+			itemCount++;
 		}
 	}
-	
+
 	return -1;
 }
+
 ```
 
 ### 9. Update showPreview Function
@@ -436,15 +645,16 @@ async function showPreview() {
 	try {
 		const doc = window.activeTextEditor?.document;
 		
+		if (!doc || !isWirevizYamlFile(doc)) {
+			createOrShowPreviewPanel(doc, "");
+			show(MsgType.Err, "Not a WireViz YAML");
+			return;
+		}
+		
 		// Ensure we have a panel so we can show either output or errors
 		createOrShowPreviewPanel(doc, "");
 		
 		show(MsgType.Info, "Validating YAML...");
-		
-		if (!doc || !isWirevizYamlFile(doc)) {
-			show(MsgType.Err, "Not a WireViz YAML");
-			return;
-		}
 		
 		// Validate the document
 		validateWirevizDocument(doc);
