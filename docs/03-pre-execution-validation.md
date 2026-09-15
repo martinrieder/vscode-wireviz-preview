@@ -1,4 +1,4 @@
-# Step 3: Modify extension.ts for Pre-Validation and Diagnostics
+# Step 3: Pre-Execution Validation and Diagnostics
 
 ## Objective
 Modify extension.ts to add:

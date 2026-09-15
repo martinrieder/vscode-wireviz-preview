@@ -38,7 +38,7 @@ For the complete schema implementation, see the actual file in the repository.
 See the remaining implementation guides in the docs/ directory:
 
 - [docs/02-register-schema.md](docs/02-register-schema.md) - Register the schema
-- [docs/03-modify-extension.md](docs/03-modify-extension.md) - Add validation and diagnostics
+- [docs/03-pre-execution-validation.md](docs/03-pre-execution-validation.md) - Add validation and diagnostics
 
 
 ## Validation

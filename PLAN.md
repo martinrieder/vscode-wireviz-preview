@@ -30,7 +30,7 @@ Implement YAML syntax validation for WireViz files in the VSCode extension to ca
    - Check for required WireViz structure elements
    - Detect common issues (missing sections, invalid types, malformed references)
    - Display validation errors as diagnostic markers in the editor
-   - See [Step 3: Modify extension.ts](docs/03-modify-extension.md)
+   - See [Step 3: Pre-Execution Validation](docs/03-pre-execution-validation.md)
 
 ## Notes on Implementation Order
 
