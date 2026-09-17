@@ -34,9 +34,17 @@ const SCHEMA = "wireviz" as const;
 const SCHEMA_URI = `${SCHEMA}://schemas/wireviz-schema.json`;
 
 export async function activate(context: vscode.ExtensionContext) {
+	// Read the schema content synchronously to avoid race conditions
+	try {
+		const schemaPath = path.join(context.extensionPath, "schemas", "wireviz-schema.json");
+		schemaJSON = fs.readFileSync(schemaPath, "utf-8");
+		console.log("WireViz YAML schema loaded successfully.");
+	} catch (err) {
+		console.error("Failed to load WireViz schema:", err);
+	}
 
 	// Register WireViz schema contributor with vscode-yaml extension
-	registerWireVizYamlContributor(context);
+	await registerWireVizYamlContributor(context);
 	
 	context.subscriptions.push(
 		vscode.commands.registerCommand("wireviz.showPreview", async() => await showPreview()),
@@ -49,14 +57,6 @@ export async function activate(context: vscode.ExtensionContext) {
  * to provide dynamic schema association based on file content.
  */
 async function registerWireVizYamlContributor(context: vscode.ExtensionContext) {
-	// Read the schema content synchronously to avoid race conditions
-	try {
-		const schemaPath = path.join(context.extensionPath, "schemas", "wireviz-schema.json");
-		schemaJSON = fs.readFileSync(schemaPath, "utf-8");
-		console.log("WireViz YAML schema loaded successfully.");
-	} catch (err) {
-		console.error("Failed to load WireViz schema:", err);
-	}
 	try {
 		const yamlExtension = vscode.extensions.getExtension("redhat.vscode-yaml");
 		

@@ -21,7 +21,10 @@
     "preview"
   ],
   "license": "GPL-3.0-only",
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "onCommand:wireviz.showPreview"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
