@@ -10,7 +10,7 @@
  *   node test/test-schema.js [--path <path-to-examples>] [--schema <path-to-schema>]
  * 
  * Options:
- *   --path     Path to directory containing WireViz YAML examples (default: ../../WireViz/examples)
+ *   --path     Path to directory containing WireViz YAML examples
  *   --schema   Path to the JSON schema file (default: ../schemas/wireviz-schema.json)
  *   --help     Show this help message
  */
@@ -34,7 +34,6 @@ Usage:
 
 Options:
   --path     Path to directory containing WireViz YAML examples
-            (default: ../../WireViz/examples relative to script)
   --schema   Path to the JSON schema file
             (default: ../schemas/wireviz-schema.json relative to script)
   --help     Show this help message
@@ -56,7 +55,7 @@ if (args.help || args.h) {
 const scriptDir = path.dirname(__filename);
 const examplesPath = args.path 
   ? path.resolve(args.path)
-  : path.resolve(scriptDir, '../../WireViz/examples');
+  : path.resolve(scriptDir);
 const schemaPath = args.schema
   ? path.resolve(args.schema)
   : path.resolve(scriptDir, '../schemas/wireviz-schema.json');

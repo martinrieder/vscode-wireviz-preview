@@ -31,13 +31,9 @@ let schemaJSON: string | undefined;
 
 /** Custom schema URI for WireViz */
 const SCHEMA = "wireviz" as const;
-const SCHEMA_URI = `${SCHEMA}://schema`;
+const SCHEMA_URI = `${SCHEMA}://schemas/wireviz-schema.json`;
 
 export async function activate(context: vscode.ExtensionContext) {
-	// Read the schema content once and cache it
-	const schemaPath = vscode.Uri.joinPath(context.extensionUri, "schemas", "wireviz-schema.json");
-	const schemaContent = await vscode.workspace.fs.readFile(schemaPath);
-	schemaJSON = Buffer.from(schemaContent).toString("utf-8");
 
 	// Register WireViz schema contributor with vscode-yaml extension
 	registerWireVizYamlContributor(context);
@@ -53,6 +49,14 @@ export async function activate(context: vscode.ExtensionContext) {
  * to provide dynamic schema association based on file content.
  */
 async function registerWireVizYamlContributor(context: vscode.ExtensionContext) {
+	// Read the schema content synchronously to avoid race conditions
+	try {
+		const schemaPath = path.join(context.extensionPath, "schemas", "wireviz-schema.json");
+		schemaJSON = fs.readFileSync(schemaPath, "utf-8");
+		console.log("WireViz YAML schema loaded successfully.");
+	} catch (err) {
+		console.error("Failed to load WireViz schema:", err);
+	}
 	try {
 		const yamlExtension = vscode.extensions.getExtension("redhat.vscode-yaml");
 		
@@ -61,11 +65,9 @@ async function registerWireVizYamlContributor(context: vscode.ExtensionContext) 
 			return;
 		}
 
-		console.log("Registering WireViz YAML contributor with redhat.vscode-yaml extension...");
-		
 		// Register the contributor
 		(await yamlExtension.activate()).registerContributor(
-			SCHEMA_URI,
+			SCHEMA,
 			onRequestSchemaURI,
 			onRequestSchemaContent
 		);
@@ -122,10 +124,14 @@ function onRequestSchemaURI(resource: string): string | undefined {
  */
 function onRequestSchemaContent(schemaUri: string): string | undefined {
 	const parsedUri = vscode.Uri.parse(schemaUri);
-	if (parsedUri.scheme !== SCHEMA || parsedUri.authority !== "schema") {
+	if (parsedUri.scheme !== SCHEMA) {
 		return undefined;
 	}
-	return schemaJSON;
+	if (!parsedUri.path || !parsedUri.path.startsWith('/')) {
+		return undefined;
+	}
+	// Return cached schema content (loaded synchronously during activation)
+	return schemaJSON ?? undefined;
 }
 
 export async function deactivate() {
