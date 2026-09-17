@@ -1,4 +1,5 @@
 import aspawn from "await-spawn";
+import fs from "fs";
 import path from "path";
 import semver from "semver";
 import vscode, {window, TextDocument, Uri, WebviewOptions, Extension} from "vscode";
@@ -26,12 +27,18 @@ type ConfiguredArgs = {
 
 let viewPanel: vscode.WebviewPanel | undefined;
 let isRunning = false;
+let schemaJSON: string | undefined;
 
 /** Custom schema URI for WireViz */
 const SCHEMA = "wireviz" as const;
 const SCHEMA_URI = `${SCHEMA}://schema`;
 
 export async function activate(context: vscode.ExtensionContext) {
+	// Read the schema content once and cache it
+	const schemaPath = vscode.Uri.joinPath(context.extensionUri, "schemas", "wireviz-schema.json");
+	const schemaContent = await vscode.workspace.fs.readFile(schemaPath);
+	schemaJSON = Buffer.from(schemaContent).toString("utf-8");
+
 	// Register WireViz schema contributor with vscode-yaml extension
 	registerWireVizYamlContributor(context);
 	
@@ -47,24 +54,17 @@ export async function activate(context: vscode.ExtensionContext) {
  */
 async function registerWireVizYamlContributor(context: vscode.ExtensionContext) {
 	try {
-		const yamlExtension = vscode.extensions.getExtension<{
-			registerContributor: (schema: string, onRequestSchemaURI: (resource: string) => string | undefined, onRequestSchemaContent: (schemaUri: string) => string | undefined) => void;
-		}>("redhat.vscode-yaml");
+		const yamlExtension = vscode.extensions.getExtension("redhat.vscode-yaml");
 		
 		if (!yamlExtension) {
 			console.log("redhat.vscode-yaml extension not found. WireViz schema registration skipped.");
 			return;
 		}
-		
-		await yamlExtension.activate();
-		
-		// Read the schema content once and cache it
-		const schemaPath = vscode.Uri.joinPath(context.extensionUri, "schemas", "wireviz-schema.json");
-		const schemaContent = await vscode.workspace.fs.readFile(schemaPath);
-		const schemaJSON = Buffer.from(schemaContent).toString("utf-8");
+
+		console.log("Registering WireViz YAML contributor with redhat.vscode-yaml extension...");
 		
 		// Register the contributor
-		yamlExtension.exports.registerContributor(
+		(await yamlExtension.activate()).registerContributor(
 			SCHEMA_URI,
 			onRequestSchemaURI,
 			onRequestSchemaContent
@@ -80,7 +80,7 @@ async function registerWireVizYamlContributor(context: vscode.ExtensionContext) 
  * Callback for vscode-yaml to determine the schema URI for a given resource.
  * Uses detection logic based on WireViz file structure.
  */
-async function onRequestSchemaURI(resource: string): Promise<string | undefined> {
+function onRequestSchemaURI(resource: string): string | undefined {
 	const uri = vscode.Uri.parse(resource);
 	
 	// Only consider YAML files
@@ -89,8 +89,8 @@ async function onRequestSchemaURI(resource: string): Promise<string | undefined>
 	}
 	
 	try {
-		const content = await vscode.workspace.fs.readFile(uri);
-		const text = Buffer.from(content).toString("utf-8");
+		// Use synchronous filesystem read since this is a synchronous callback
+		const text = fs.readFileSync(uri.fsPath, 'utf8');
 		
 		// Check for top-level WireViz keys (case-insensitive)
 		const hasConnectors = /^\s*connectors:/m.test(text);
@@ -295,13 +295,13 @@ function getWebviewOptions(outputDir: string): WebviewOptions {
 	return {
 		enableScripts: false,
 		localResourceRoots: (isOutsideWorkspace(outputDir))
-			? [Uri.file(outputDir)]
+			? [vscode.Uri.file(outputDir)]
 			: undefined // when undefined, `localResourceRoots` defaults to WS/Folder root.
 	};
 }
 
 function isOutsideWorkspace(dir: string): boolean {
-	return vscode.workspace.getWorkspaceFolder(Uri.file(dir)) === undefined;
+	return vscode.workspace.getWorkspaceFolder(vscode.Uri.file(dir)) === undefined;
 }
 
 // Rudimentary check for the minimum required contents of a WV yaml.
@@ -332,7 +332,7 @@ function show(msgType: MsgType, msg: string) {
 
 function showImg(imgFileName: string) {
 	if (viewPanel) {
-		const uri = Uri.file(imgFileName);
+		const uri = vscode.Uri.file(imgFileName);
 		const webviewUri = viewPanel.webview.asWebviewUri(uri);
 		viewPanel.webview.html = `
 			<html><head>${ViewPanelCss}</head><body>
