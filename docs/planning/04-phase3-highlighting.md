@@ -5,6 +5,8 @@
 ## Objective
 Implement advanced highlighting in the BOM table that reflects the current selection in the YAML code. Highlight only the items that belong to the cursor position in the YAML code, including support for highlighting multiple items when the cursor is in a connection set that refers to multiple designators.
 
+**Builds on**: Phase 2's View Management Architecture, HTML templates, and extensible message handler.
+
 ---
 
 ## Key Requirements
@@ -13,10 +15,36 @@ Implement advanced highlighting in the BOM table that reflects the current selec
 - **Highlight single items**: When cursor is on a connector/cable definition
 - **Highlight multiple items**: When cursor is in a connection set with multiple designators
 - **Real-time updates**: Highlighting updates as cursor moves
+- **Integrates with Phase 2**: Uses Phase 2's message types, templates, and state management
 
 ---
 
 ## Architecture Overview
+
+This phase **extends Phase 2's View Management Architecture** with cursor tracking and highlighting capabilities.
+
+### Relationship to Phase 2
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Phase 2 Foundation                               │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────┐ │
+│  │ Extension State  │    │ HTML Templates   │    │ Message      │ │
+│  │ - viewMode      │    │ - bom.html       │    │ Handler      │ │
+│  │ - bomData       │    │ - diagram.html   │    │ - Extensible │ │
+│  │ - currentDoc    │    │ - combined.html  │    │   switch     │ │
+│  └─────────────────┘    └─────────────────┘    └─────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+         │                              │                    │
+         ▼                              ▼                    ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────┐
+│ Phase 3 Adds:    │    │ Phase 3 Adds:    │    │ Phase 3      │
+│ - Cursor tracking│    │ - data-designators│   │ Extends:     │
+│ - Designator    │    │   attributes     │    │ - highlight  │
+│   extraction    │    │ - .highlighted   │    │ - clear      │
+│ - Message posting│    │   CSS class      │    │   cases      │
+└─────────────────┘    └─────────────────┘    └─────────────┘
+```
 
 ### Designator Extraction Strategy
 
@@ -28,8 +56,14 @@ Since we cannot add `js-yaml` as a dependency and redhat-yaml does not provide s
 
 ### Highlighting Flow
 ```
-Cursor Move → Determine Context → Extract Designators → Map to BOM Rows → Send to Webview → Highlight
+Cursor Move → Determine Context → Extract Designators → Use Phase 2 State → Send Message → Phase 2 Template Handles Highlight
 ```
+
+**Key Integration Points with Phase 2**:
+- Uses Phase 2's `currentBomData` state for designator lookup
+- Uses Phase 2's `viewPanel` for message posting
+- Uses Phase 2's message handler (extended with new cases)
+- Uses Phase 2's BOM template with `data-designators` attributes (already present)
 
 ---
 
@@ -49,19 +83,52 @@ The extension only provides:
 
 ---
 
+## Integration with Phase 2
+
+### Dependencies on Phase 2
+
+Phase 3 **requires** the following from Phase 2:
+
+1. **Message Type System**: `WebviewMessage` and `ExtensionMessage` types from `src/utils/webviewMessages.ts`
+2. **Template Loader**: `loadTemplate()` function from `src/utils/templateLoader.ts`
+3. **State Management**: `currentBomData` and `viewPanel` variables in `extension.ts`
+4. **Extensible Handler**: `handleWebviewMessage()` function that Phase 3 will extend
+5. **BOM Templates**: `bom.html` and `combined.html` templates with `data-designators` attributes
+
+### What Phase 2 Provides for Phase 3
+
+| Phase 2 Component | Phase 3 Usage |
+|------------------|---------------|
+| `currentBomData: { rows: BomRow[] }` | Access BOM rows for designator matching |
+| `viewPanel: vscode.WebviewPanel` | Post highlight/clear messages to webview |
+| `handleWebviewMessage()` | Extend with `highlightDesignators` and `clearHighlight` cases |
+| `bom.html` template | Contains highlighting JavaScript and CSS |
+| `combined.html` template | Contains highlighting JavaScript and CSS |
+| `ViewMode` type | Track which view is active for highlighting |
+| `WebviewMessage` type | Already includes `highlightDesignators` and `clearHighlight` |
+
+**Note**: The BOM templates created in Phase 2 already include:
+- `data-designators` attributes on table rows
+- `.highlighted` CSS class for visual feedback
+- JavaScript for `highlightDesignators()` and `clearHighlight()` functions
+- Message listener for highlight messages from extension
+
+---
+
 ## Implementation Details
 
-### Step 1: Add Cursor Tracking
+### Step 1: Add Cursor Tracking (Integrated with Phase 2)
 
 **File**: `src/extension.ts`
 
+**Integrates with Phase 2's `createOrShowPreviewPanel`** - adds cursor tracking setup.
+
 ```typescript
-// Add state variables
+// Add state variables for cursor tracking
 let selectionDisposable: vscode.Disposable | null = null;
 let designatorCache: Map<number, string[]> = new Map();
-let cacheDocVersion: number = -1;
 
-// Modify createOrShowPreviewPanel to set up selection tracking
+// Modify Phase 2's createOrShowPreviewPanel to include cursor tracking
 function createOrShowPreviewPanel(doc: TextDocument | undefined, outputDir: string) {
     const docColumn = window.activeTextEditor?.viewColumn;
 
@@ -93,12 +160,16 @@ function createOrShowPreviewPanel(doc: TextDocument | undefined, outputDir: stri
         }
     }
     
-    // Set up selection tracking for advanced highlighting
-    setupSelectionTracking();
+    // Phase 3: Set up selection tracking for highlighting
+    // Only if we have BOM data (from Phase 1/2)
+    if (currentBomData.rows.length > 0) {
+        setupSelectionTracking();
+    }
 }
 
 /**
  * Sets up cursor position tracking for BOM highlighting
+ * Uses Phase 2's currentBomData state
  */
 function setupSelectionTracking() {
     // Clean up previous disposable
@@ -109,13 +180,11 @@ function setupSelectionTracking() {
     const doc = window.activeTextEditor?.document;
     if (!doc || !viewPanel) return;
     
-    // Only track if we have BOM data with designators
-    const hasDesignators = currentBomData.rows.some(r => r.Designators);
-    if (!hasDesignators) {
-        // Clear any existing highlights
-        if (viewPanel) {
-            viewPanel.webview.postMessage({ type: 'clearHighlight' });
-        }
+    // Check if current view shows BOM (from Phase 2 state)
+    const shouldTrack = currentViewMode === 'bom' || currentViewMode === 'combined';
+    if (!shouldTrack) {
+        // Clear highlights if switching to diagram-only view
+        viewPanel.webview.postMessage({ type: 'clearHighlight' });
         return;
     }
     
@@ -166,12 +235,17 @@ function setupSelectionTracking() {
 
 **File**: `src/utils/designatorExtractor.ts` (new file)
 
+Uses Phase 2's `BomRow` type for consistency.
+
 ```typescript
 import * as vscode from 'vscode';
+import { BomRow } from './webviewMessages';
 
 /**
  * Extracts designators from YAML at cursor position using regex patterns.
  * Handles WireViz-specific YAML structure.
+ * 
+ * Used by Phase 3 cursor tracking to find which BOM items to highlight.
  */
 export function extractDesignators(
     doc: vscode.TextDocument,
@@ -248,6 +322,8 @@ function extractDefinitionDesignator(line: string): string[] {
  *     - X1: [1-4]
  *     - W1: [1-4]
  *     - X2: [1-4]
+ * 
+ * Returns ALL designators in the set for multi-item highlighting.
  */
 function extractConnectionSetDesignators(doc: vscode.TextDocument, lineNumber: number): string[] {
     const designators: Set<string> = new Set();
@@ -330,127 +406,64 @@ function extractAnyDesignator(line: string): string[] {
     
     return designators;
 }
+
+/**
+ * Finds BOM rows that match the given designators
+ * Uses Phase 2's currentBomData state
+ */
+export function findMatchingBomRows(designators: string[]): BomRow[] {
+    const designatorSet = new Set(designators.map(d => d.trim()));
+    return currentBomData.rows.filter(row => {
+        const rowDesignators = (row.Designators || '')
+            .split(',')
+            .map(d => d.trim());
+        return rowDesignators.some(d => designatorSet.has(d));
+    });
+}
 ```
 
 ---
 
-### Step 3: Update Webview for Highlighting
+### Step 3: Extend Phase 2's Message Handler
 
 **File**: `src/extension.ts`
 
+**Extends Phase 2's `handleWebviewMessage`** to add highlighting cases.
+
 ```typescript
-// Update generateBomTableHtml to include data-designators attribute
-function generateBomTableHtml(bomData: BomData): string {
-    if (!bomData || bomData.rows.length === 0) {
-        return '<div class="bom-empty">No BOM data available</div>';
-    }
-    
-    const rowsHtml = bomData.rows.map(row => {
-        // Normalize designators (split by comma, trim whitespace)
-        const normalizedDesignators = (row.Designators || '')
-            .split(',')
-            .map(d => d.trim())
-            .filter(d => d.length > 0)
-            .join(',');
+// In handleWebviewMessage function, ADD these cases:
+
+function handleWebviewMessage(message: ExtensionMessage) {
+    switch (message.type) {
+        case 'toggleView':
+            toggleViewMode();
+            break;
         
-        return `
-            <tr data-designators="${normalizedDesignators}">
-                <td class="col-id">${escapeHtml(row.Id)}</td>
-                <td class="col-description">${escapeHtml(row.Description)}</td>
-                <td class="col-qty">${escapeHtml(row.Qty)}</td>
-                <td class="col-unit">${escapeHtml(row.Unit)}</td>
-                <td class="col-designators">${escapeHtml(row.Designators)}</td>
-            </tr>
-        `;
-    }).join('');
-    
-    return `
-        <div class="bom-container">
-            <div class="bom-toolbar">
-                <input type="text" id="bom-filter" placeholder="Filter BOM...">
-                <span class="bom-count">${bomData.rows.length} items</span>
-            </div>
-            <table class="bom-table">
-                <thead>
-                    <tr>
-                        <th class="col-id">ID</th>
-                        <th class="col-description">Description</th>
-                        <th class="col-qty">Qty</th>
-                        <th class="col-unit">Unit</th>
-                        <th class="col-designators">Designators</th>
-                    </tr>
-                </thead>
-                <tbody>${rowsHtml}</tbody>
-            </table>
-        </div>
-        <script>
-            // Filtering
-            document.getElementById('bom-filter')?.addEventListener('input', (e) => {
-                const filter = e.target.value.toLowerCase();
-                document.querySelectorAll('.bom-table tbody tr').forEach(row => {
-                    const text = row.textContent.toLowerCase();
-                    row.style.display = text.includes(filter) ? '' : 'none';
-                });
-            });
-            
-            // Highlighting (receive from extension)
-            window.addEventListener('message', event => {
-                const message = event.data;
-                if (message.type === 'highlightDesignators') {
-                    highlightDesignators(message.designators);
-                } else if (message.type === 'clearHighlight') {
-                    clearHighlight();
-                }
-            });
-            
-            function highlightDesignators(designators) {
-                if (!designators || designators.length === 0) {
-                    clearHighlight();
-                    return;
-                }
-                
-                const designatorSet = new Set(designators.map(d => d.trim()));
-                
-                document.querySelectorAll('.bom-table tbody tr').forEach(row => {
-                    const rowDesignators = (row.getAttribute('data-designators') || '')
-                        .split(',')
-                        .map(d => d.trim());
-                    const hasMatch = rowDesignators.some(d => designatorSet.has(d));
-                    
-                    if (hasMatch) {
-                        row.classList.add('highlighted');
-                    } else {
-                        row.classList.remove('highlighted');
-                    }
-                });
-            }
-            
-            function clearHighlight() {
-                document.querySelectorAll('.bom-table tbody tr').forEach(row => {
-                    row.classList.remove('highlighted');
-                });
-            }
-        </script>
-    `;
+        case 'setViewMode':
+            setViewMode(message.mode);
+            break;
+        
+        case 'filterChanged':
+            // Phase 1: Filter state tracking (optional)
+            break;
+        
+        case 'sortChanged':
+            // Phase 1: Sort state tracking (optional)
+            break;
+        
+        // PHASE 3: Highlighting message handling
+        // These messages are sent FROM webview TO extension
+        // (e.g., when user clicks on a BOM row, we could highlight in YAML)
+        // For now, we only send FROM extension TO webview
+        
+        // Note: The actual highlight/clear messages are sent BY extension
+        // to webview via viewPanel.webview.postMessage(), so we don't
+        // need to handle them here. The webview handles them directly.
+    }
 }
 ```
 
-Add CSS for highlighting:
-
-```typescript
-// Add to ViewPanelCss:
-.bom-table tbody tr.highlighted {
-    background-color: #ffeb3b !important;
-    color: #000 !important;
-    font-weight: bold;
-}
-.bom-table tbody tr.highlighted:hover td {
-    background-color: #ffeb3b !important;
-}
-.bom-table tbody tr.highlighted td {
-    border-bottom-color: #ffeb3b;
-}
-```
+**Note**: The highlighting JavaScript and CSS are **already in Phase 2's templates** (`bom.html` and `combined.html`). No changes needed here.
 
 ---
 
@@ -458,9 +471,15 @@ Add CSS for highlighting:
 
 **File**: `src/extension.ts`
 
+**Uses Phase 2's `viewPanel` and message types** to send highlighting commands.
+
 ```typescript
+// Import from Phase 2's message types
+import { WebviewMessage } from './utils/webviewMessages';
+
 /**
  * Updates BOM highlighting based on current cursor position
+ * Uses Phase 2's viewPanel and currentBomData
  */
 function updateHighlightFromCursor() {
     const doc = window.activeTextEditor?.document;
@@ -472,36 +491,43 @@ function updateHighlightFromCursor() {
     const cursorPosition = selection.active;
     const designators = extractDesignators(doc, cursorPosition);
     
-    if (designators.length > 0) {
-        viewPanel.webview.postMessage({
-            type: 'highlightDesignators',
-            designators: designators
-        });
-    } else {
-        viewPanel.webview.postMessage({ type: 'clearHighlight' });
-    }
+    // Use Phase 2's message types
+    const message: WebviewMessage = designators.length > 0
+        ? { type: 'highlightDesignators', designators: designators }
+        : { type: 'clearHighlight' };
+    
+    viewPanel.webview.postMessage(message);
 }
 ```
 
+**Note**: This sends messages to the webview where Phase 2's templates already have the JavaScript to handle `highlightDesignators` and `clearHighlight` messages.
+
 ---
 
-### Step 5: Handle Webview Messages
+### Step 5: Verify Phase 2's Message Handler Setup
 
 **File**: `src/extension.ts`
 
+**Phase 2 already sets up the message handler** in `createOrShowPreviewPanel`:
+
 ```typescript
-// In createOrShowPreviewPanel, set up message handler:
+// This is already in Phase 2's implementation:
 if (viewPanel) {
-    viewPanel.webview.onDidReceiveMessage(message => {
-        // Handle messages from webview
-        // (Currently no messages from webview for highlighting)
+    viewPanel.webview.onDidReceiveMessage((message: ExtensionMessage) => {
+        handleWebviewMessage(message);
     });
 }
 ```
 
+**No changes needed** - Phase 2's extensible handler is ready for Phase 3.
+
 ---
 
 ## Testing Strategy
+
+### Prerequisites
+- Phase 1: BOM display working
+- Phase 2: View toggling and templates working
 
 ### Unit Tests
 - [ ] Designator extraction from connector definition
@@ -511,11 +537,13 @@ if (viewPanel) {
 - [ ] Edge cases (cursor on whitespace, comments, etc.)
 
 ### Integration Tests
-- [ ] Highlight updates on cursor move
+- [ ] Highlight updates on cursor move (with Phase 2 templates)
 - [ ] Highlight clears when cursor leaves relevant sections
 - [ ] Multiple items highlighted for connection sets
-- [ ] Highlighting works with filtering
-- [ ] Highlight persists across view mode changes
+- [ ] Highlighting works with Phase 2's filtering
+- [ ] Highlight works in both 'bom' and 'combined' view modes
+- [ ] Highlight clears when switching to 'diagram' view
+- [ ] Highlight persists across view mode changes (bom ↔ combined)
 
 ### Edge Cases
 - [ ] Cursor on comment line
@@ -524,8 +552,10 @@ if (viewPanel) {
 - [ ] Cursor in templates section
 - [ ] Very long designator names
 - [ ] Designators with special characters
-- [ ] Rapid cursor movement
+- [ ] Rapid cursor movement (debounce test)
 - [ ] Cursor in nested structures
+- [ ] BOM with no designators column
+- [ ] Empty BOM data
 
 ---
 
@@ -583,13 +613,37 @@ Consider adding these configuration options:
 
 ## Summary
 
-Phase 3 adds **cursor-position-based highlighting** to the BOM table:
+Phase 3 adds **cursor-position-based highlighting** to the BOM table by **extending Phase 2's architecture**:
 
-1. Tracks cursor position in YAML editor
-2. Extracts designator(s) using regex patterns (no dependencies)
-3. Maps designators to BOM rows via `data-designators` attribute
-4. Highlights matching rows with visual feedback
-5. Handles both single items and connection sets
-6. Includes debouncing for performance
+### What Phase 3 Adds
+1. **Cursor Tracking**: Monitors cursor position in YAML editor
+2. **Designator Extraction**: Regex-based extraction utility (`designatorExtractor.ts`)
+3. **Message Posting**: Sends highlight/clear messages to webview using Phase 2's types
+4. **Context Awareness**: Handles single items and connection sets
 
-This builds on Phase 1 (BOM display) and Phase 2 (view toggling) without requiring any new dependencies.
+### What Phase 3 Reuses from Phase 2
+1. **Message Types**: `WebviewMessage` with `highlightDesignators` and `clearHighlight`
+2. **Templates**: `bom.html` and `combined.html` with highlighting JavaScript and CSS
+3. **State Management**: `currentBomData` and `viewPanel`
+4. **Message Handler**: Extensible `handleWebviewMessage` function
+5. **View Management**: Tracks which views support highlighting
+
+### Integration Points
+```
+Phase 2 Provides:
+├── Template Loader (loadTemplate)
+├── HTML Templates (bom.html, combined.html) with:
+│   ├── data-designators attributes
+│   ├── .highlighted CSS class
+│   └── highlightDesignators() JavaScript function
+├── Message Types (WebviewMessage)
+├── State (currentBomData, viewPanel, currentViewMode)
+└── Message Handler (handleWebviewMessage)
+
+Phase 3 Adds:
+├── Cursor Tracking (setupSelectionTracking)
+├── Designator Extraction (extractDesignators)
+└── Message Posting (updateHighlightFromCursor)
+```
+
+This builds on Phase 1 (BOM display) and Phase 2 (view toggling + templates) without requiring any new dependencies. The highlighting functionality is **fully integrated** with Phase 2's architecture.

@@ -45,16 +45,21 @@ Id  Description                     Qty Unit Designators
 - **Enhanced features**: Include **column sorting** and **filtering** in Phase 1
 - **Minimal changes**: Only modify what's necessary for BOM generation and display
 
-### Phase 2: View Toggle
+### Phase 2: View Toggle & Template Foundation
 - **Toggle between views**: Switch between diagram-only, BOM-only, or combined views
-- **Separate HTML files**: Optional - extract views into separate template files for cleaner code
+- **Separate HTML files**: **MANDATORY FOUNDATION** - extract views into separate template files
+- **Template loader**: Utility for loading and populating HTML templates
 - **View state persistence**: Remember user's preferred view mode
+- **View Management Architecture**: Bidirectional communication between extension and webview
+- **Unified message types**: Shared type system for all phases
+- **Extensible message handler**: Ready for Phase 3 highlighting
 
 ### Phase 3: Advanced Highlighting
 - **Cursor tracking**: Monitor cursor position in YAML editor
 - **Regex extraction**: Extract designators using pattern matching (no js-yaml dependency)
 - **Highlighting**: Visual feedback showing which BOM items match cursor position
 - **Connection sets**: Support multiple designators in connection arrays
+- **Builds on Phase 2**: Uses Phase 2's templates, message types, and state management
 
 ### File Structure
 
@@ -66,18 +71,29 @@ src/
     └── bomParser.ts      # TSV parsing utility
 ```
 
-**Phase 2 (optional):**
+**Phase 2 (MANDATORY templates):**
 ```
 src/
-├── extension.ts
-├── utils/
-│   └── bomParser.ts
-└── views/
-    ├── diagram.html      # Optional: Separate template
-    └── bom.html          # Optional: Separate template
+├──── extension.ts
+├──── utils/
+│   ├── bomParser.ts
+│   ├── webviewMessages.ts  # Unified message types for all phases
+│   └──── templateLoader.ts  # Template loading utility
+└──── views/
+    ├── diagram.html      # Template for diagram-only view
+    ├── bom.html          # Template for BOM-only view (with highlighting JS)
+    └──── combined.html    # Template for combined view (with highlighting JS)
 ```
 
 **Phase 3:**
+```
+src/
+├──── extension.ts         # Extended with cursor tracking
+├──── utils/
+│   ├── bomParser.ts
+│   ├── webviewMessages.ts  # Shared with Phase 2
+│   ├── templateLoader.ts   # Shared with Phase 2
+│   └──── designatorExtractor.ts  # Regex-based designator extraction
 ```
 src/
 ├── extension.ts
