@@ -9,7 +9,7 @@ Implement advanced highlighting in the BOM table that reflects the current selec
 
 ## Key Requirements
 - **No new dependencies**: Cannot add `js-yaml` or similar libraries
-- **Optional redhat-yaml**: Can leverage if installed, but must have fallback
+- **Regex-based extraction**: Primary method for designator extraction
 - **Highlight single items**: When cursor is on a connector/cable definition
 - **Highlight multiple items**: When cursor is in a connection set with multiple designators
 - **Real-time updates**: Highlighting updates as cursor moves
@@ -20,338 +20,48 @@ Implement advanced highlighting in the BOM table that reflects the current selec
 
 ### Designator Extraction Strategy
 
-Since we cannot add `js-yaml` as a dependency, we use a **two-tier approach**:
+Since we cannot add `js-yaml` as a dependency and redhat-yaml does not provide syntax tree access, we use a **regex-based approach**:
 
-1. **Primary**: Use `redhat-yaml` extension API (if available)
-   - Provides full YAML AST
-   - Accurate node identification
-   - Handles complex YAML structures
-
-2. **Fallback**: Regex-based extraction
-   - Line-based parsing
-   - Pattern matching for WireViz-specific structures
-   - Handles most common cases
+1. **Context-aware parsing**: Determine which section (connectors, cables, connections) the cursor is in
+2. **Pattern matching**: Extract designators using WireViz-specific regex patterns
+3. **Connection set handling**: When in connections section, extract all designators from the connection set
 
 ### Highlighting Flow
 ```
-Cursor Move → Extract Designators → Map to BOM Rows → Send to Webview → Highlight
+Cursor Move → Determine Context → Extract Designators → Map to BOM Rows → Send to Webview → Highlight
 ```
+
+---
+
+## Research Findings
+
+### redhat-yaml Extension API Analysis
+The `redhat.vscode-yaml` extension **does NOT provide** an API for:
+- Getting the YAML syntax tree
+- Getting the node at a specific position
+- Parsing YAML documents programmatically
+
+The extension only provides:
+- Schema contributor registration
+- Schema modification
+
+**Conclusion**: We cannot use redhat-yaml for syntax tree access. Regex-based extraction is the only viable approach.
 
 ---
 
 ## Implementation Details
 
-### Step 1: Check for redhat-yaml Extension
+### Step 1: Add Cursor Tracking
 
-Add utility to check if redhat-yaml is available:
-
-```typescript
-// src/utils/yamlHelper.ts
-import * as vscode from 'vscode';
-
-/**
- * Checks if redhat-yaml extension is installed and activated
- */
-export function isRedhatYamlAvailable(): boolean {
-    const yamlExt = vscode.extensions.getExtension('redhat.vscode-yaml');
-    return yamlExt !== undefined;
-}
-
-/**
- * Gets the YAML extension API if available
- */
-export function getYamlApi() {
-    const yamlExt = vscode.extensions.getExtension('redhat.vscode-yaml');
-    if (yamlExt && yamlExt.isActive) {
-        return yamlExt.exports;
-    }
-    return null;
-}
-```
-
-### Step 2: Designator Extraction with redhat-yaml
-
-If redhat-yaml is available, use its API to get the syntax tree:
+**File**: `src/extension.ts`
 
 ```typescript
-// src/utils/designatorExtractor.ts
-import * as vscode from 'vscode';
-import { isRedhatYamlAvailable, getYamlApi } from './yamlHelper';
-
-/**
- * Extracts designators from YAML at cursor position using redhat-yaml
- */
-export function extractDesignatorsWithYamlApi(
-    doc: vscode.TextDocument,
-    position: vscode.Position
-): string[] {
-    try {
-        const yamlApi = getYamlApi();
-        if (!yamlApi || !yamlApi.parseYAML) {
-            return [];
-        }
-        
-        const text = doc.getText();
-        const yamlDoc = yamlApi.parseYAML(text);
-        
-        // Find node at position
-        const offset = doc.offsetAt(position);
-        const node = findNodeAtOffset(yamlDoc, offset);
-        
-        if (!node) {
-            return [];
-        }
-        
-        // Extract designator from node
-        return extractDesignatorsFromNode(node, yamlDoc);
-        
-    } catch (error) {
-        console.warn('Failed to extract designators with YAML API:', error);
-        return [];
-    }
-}
-
-/**
- * Recursively finds the YAML node at a given offset
- */
-function findNodeAtOffset(node: any, offset: number): any | null {
-    if (!node) return null;
-    
-    // Check if this node contains the offset
-    if (node.offset !== undefined && node.length !== undefined) {
-        if (offset >= node.offset && offset < node.offset + node.length) {
-            // Found containing node, check children
-            if (node.children || node.mappings || node.items) {
-                const children = node.children || node.mappings || node.items || [];
-                for (const child of children) {
-                    const result = findNodeAtOffset(child, offset);
-                    if (result) return result;
-                }
-            }
-            return node;
-        }
-        return null;
-    }
-    
-    // Handle different node types
-    if (node.kind && node.startPosition && node.endPosition) {
-        const startOffset = node.startPosition;
-        const endOffset = node.endPosition;
-        if (offset >= startOffset && offset < endOffset) {
-            if (node.properties || node.entries) {
-                const children = node.properties || node.entries || [];
-                for (const child of children) {
-                    const result = findNodeAtOffset(child, offset);
-                    if (result) return result;
-                }
-            }
-            return node;
-        }
-        return null;
-    }
-    
-    return null;
-}
-
-/**
- * Extracts designators from a YAML node
- */
-function extractDesignatorsFromNode(node: any, root: any): string[] {
-    const designators: string[] = [];
-    
-    // If node is a mapping key (e.g., "X1:", "W1:")
-    if (node.key && typeof node.key.value === 'string') {
-        const key = node.key.value;
-        // Check if it's a WireViz designator (starts with letter, may contain numbers, dots, underscores)
-        if (/^[A-Za-z][A-Za-z0-9_.]*$/.test(key)) {
-            designators.push(key);
-        }
-    }
-    
-    // If node is in a connections array
-    if (node.parent && node.parent.key && node.parent.key.value === 'connections') {
-        // Extract all designators from the connection set
-        const connection = node.parent;
-        if (connection.items || connection.mappings) {
-            const items = connection.items || connection.mappings || [];
-            for (const item of items) {
-                if (item.key && typeof item.key.value === 'string') {
-                    const key = item.key.value;
-                    if (/^[A-Za-z][A-Za-z0-9_.]*$/.test(key)) {
-                        designators.push(key);
-                    }
-                }
-            }
-        }
-    }
-    
-    // If node is in connectors or cables section
-    if (node.parent && node.parent.key) {
-        const parentKey = node.parent.key.value;
-        if (parentKey === 'connectors' || parentKey === 'cables') {
-            if (node.key && typeof node.key.value === 'string') {
-                const key = node.key.value;
-                if (/^[A-Za-z][A-Za-z0-9_.]*$/.test(key)) {
-                    designators.push(key);
-                }
-            }
-        }
-    }
-    
-    return [...new Set(designators)]; // Deduplicate
-}
-```
-
-### Step 3: Fallback Regex-Based Extraction
-
-When redhat-yaml is not available, use regex patterns:
-
-```typescript
-// src/utils/designatorExtractor.ts (continued)
-
-/**
- * Extracts designators using regex patterns (fallback method)
- */
-export function extractDesignatorsWithRegex(
-    doc: vscode.TextDocument,
-    position: vscode.Position
-): string[] {
-    const line = doc.lineAt(position.line).text;
-    const lineNumber = position.line;
-    
-    // Pattern 1: Direct key match (e.g., "X1:", "W1:", "F:")
-    const keyPattern = /^(\s*)([A-Za-z][A-Za-z0-9_.]*)\s*:/;
-    const keyMatch = line.match(keyPattern);
-    if (keyMatch) {
-        return [keyMatch[2]];
-    }
-    
-    // Pattern 2: Connection set item (e.g., "- X1: [1-4]")
-    const connectionPattern = /-\s*([A-Za-z][A-Za-z0-9_.]*)\s*:/g;
-    let matches: RegExpExecArray | null;
-    const connectionDesignators: string[] = [];
-    
-    while ((matches = connectionPattern.exec(line)) !== null) {
-        connectionDesignators.push(matches[1]);
-    }
-    
-    if (connectionDesignators.length > 0) {
-        return connectionDesignators;
-    }
-    
-    // Pattern 3: Multi-line connection set
-    // Check if we're in a connections array by looking at nearby lines
-    const isInConnections = isLineInConnectionsBlock(doc, lineNumber);
-    if (isInConnections) {
-        // Extract all designators from the connection set
-        return extractConnectionDesignators(doc, lineNumber);
-    }
-    
-    // Pattern 4: Check if line contains a designator reference in a connection
-    const refPattern = /([A-Za-z][A-Za-z0-9_.]*)\s*:\s*\[/g;
-    const refDesignators: string[] = [];
-    let refMatch: RegExpExecArray | null;
-    
-    while ((refMatch = refPattern.exec(line)) !== null) {
-        refDesignators.push(refMatch[1]);
-    }
-    
-    if (refDesignators.length > 0) {
-        return refDesignators;
-    }
-    
-    return [];
-}
-
-/**
- * Checks if a line is within a connections block
- */
-function isLineInConnectionsBlock(doc: vscode.TextDocument, lineNumber: number): boolean {
-    // Look backwards for "connections:" line
-    for (let i = lineNumber; i >= 0; i--) {
-        const line = doc.lineAt(i).text.trim();
-        if (line === 'connections:' || line === '- connections:') {
-            return true;
-        }
-        if (line.length > 0 && !line.startsWith('-') && !line.startsWith(' ')) {
-            break; // Reached a non-indented line
-        }
-    }
-    return false;
-}
-
-/**
- * Extracts all designators from a connection set
- */
-function extractConnectionDesignators(doc: vscode.TextDocument, lineNumber: number): string[] {
-    const designators: Set<string> = new Set();
-    
-    // Find the start of the connection set
-    let startLine = lineNumber;
-    while (startLine >= 0) {
-        const line = doc.lineAt(startLine).text;
-        if (line.trim().startsWith('-')) {
-            break;
-        }
-        startLine--;
-    }
-    
-    // Collect all lines in the connection set
-    const connectionLines: string[] = [];
-    for (let i = startLine; i < doc.lineCount; i++) {
-        const line = doc.lineAt(i).text;
-        if (line.trim().startsWith('-') && line.trim() !== '-') {
-            connectionLines.push(line);
-        } else if (line.trim() === '-' || line.trim().length === 0) {
-            continue;
-        } else if (line.trim() && !line.startsWith(' ') && !line.startsWith('\t')) {
-            break; // End of connection set
-        } else {
-            connectionLines.push(line);
-        }
-    }
-    
-    // Extract designators from each line
-    const pattern = /-\s*([A-Za-z][A-Za-z0-9_.]*)\s*:/g;
-    for (const line of connectionLines) {
-        let match: RegExpExecArray | null;
-        while ((match = pattern.exec(line)) !== null) {
-            designators.add(match[1]);
-        }
-    }
-    
-    return Array.from(designators);
-}
-
-/**
- * Main designator extraction function
- * Uses redhat-yaml if available, falls back to regex
- */
-export function extractDesignators(
-    doc: vscode.TextDocument,
-    position: vscode.Position
-): string[] {
-    if (isRedhatYamlAvailable()) {
-        const designators = extractDesignatorsWithYamlApi(doc, position);
-        if (designators.length > 0) {
-            return designators;
-        }
-    }
-    
-    // Fallback to regex
-    return extractDesignatorsWithRegex(doc, position);
-}
-```
-
-### Step 4: Integration with Extension
-
-Update `src/extension.ts` to track cursor position and send highlights:
-
-```typescript
-// Add state variable
+// Add state variables
 let selectionDisposable: vscode.Disposable | null = null;
+let designatorCache: Map<number, string[]> = new Map();
+let cacheDocVersion: number = -1;
 
-// Update createOrShowPreviewPanel to set up selection tracking
+// Modify createOrShowPreviewPanel to set up selection tracking
 function createOrShowPreviewPanel(doc: TextDocument | undefined, outputDir: string) {
     const docColumn = window.activeTextEditor?.viewColumn;
 
@@ -399,10 +109,9 @@ function setupSelectionTracking() {
     const doc = window.activeTextEditor?.document;
     if (!doc || !viewPanel) return;
     
-    // Only track if we have BOM data and are in BOM view
-    const shouldTrack = currentBomData.rows.length > 0 && currentView === 'bom';
-    
-    if (!shouldTrack) {
+    // Only track if we have BOM data with designators
+    const hasDesignators = currentBomData.rows.some(r => r.Designators);
+    if (!hasDesignators) {
         // Clear any existing highlights
         if (viewPanel) {
             viewPanel.webview.postMessage({ type: 'clearHighlight' });
@@ -422,7 +131,7 @@ function setupSelectionTracking() {
     };
     
     // Track cursor position changes
-    selectionDisposable = window.onDidChangeTextEditorSelection((event) => {
+    const selectionChangeDisposable = window.onDidChangeTextEditorSelection((event) => {
         if (event.textEditor.document !== doc) return;
         debouncedUpdate();
     });
@@ -430,26 +139,326 @@ function setupSelectionTracking() {
     // Also track document changes (cursor might move on edit)
     const docChangeDisposable = vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.document !== doc) return;
+        // Invalidate cache
+        designatorCache.clear();
         debouncedUpdate();
     });
     
     // Combine disposables
     selectionDisposable = {
         dispose: () => {
-            if (selectionDisposable) {
-                selectionDisposable.dispose();
-            }
-            docChangeDisposable.dispose();
             if (timeout) {
                 clearTimeout(timeout);
             }
+            selectionChangeDisposable.dispose();
+            docChangeDisposable.dispose();
         }
     };
     
     // Initial update
     updateHighlightFromCursor();
 }
+```
 
+---
+
+### Step 2: Create Designator Extractor Utility
+
+**File**: `src/utils/designatorExtractor.ts` (new file)
+
+```typescript
+import * as vscode from 'vscode';
+
+/**
+ * Extracts designators from YAML at cursor position using regex patterns.
+ * Handles WireViz-specific YAML structure.
+ */
+export function extractDesignators(
+    doc: vscode.TextDocument,
+    position: vscode.Position
+): string[] {
+    const lineNumber = position.line;
+    const line = doc.lineAt(lineNumber).text;
+    
+    // Get current section context
+    const currentSection = getCurrentSection(doc, lineNumber);
+    
+    switch (currentSection) {
+        case 'connectors':
+        case 'cables':
+            return extractDefinitionDesignator(line);
+        
+        case 'connections':
+            return extractConnectionSetDesignators(doc, lineNumber);
+        
+        default:
+            // Try to extract from any line
+            return extractAnyDesignator(line);
+    }
+}
+
+/**
+ * Gets the current YAML section (connectors, cables, connections, etc.)
+ */
+function getCurrentSection(doc: vscode.TextDocument, lineNumber: number): string | null {
+    // Look backwards for section headers (max 50 lines back)
+    const startLine = Math.max(0, lineNumber - 50);
+    
+    for (let i = lineNumber; i >= startLine; i--) {
+        const line = doc.lineAt(i).text.trim();
+        
+        // Check for top-level section headers
+        if (line === 'connectors:' || line === 'cables:' || line === 'connections:') {
+            return line.replace(':', '');
+        }
+        
+        // Stop at top-level (non-indented line that's not a list item)
+        if (line.length > 0 && 
+            !line.startsWith(' ') && 
+            !line.startsWith('\t') &&
+            !line.startsWith('-')) {
+            break;
+        }
+    }
+    return null;
+}
+
+/**
+ * Extracts designator from a connector/cable definition line
+ * Example: "X1:" or "  X1:"
+ */
+function extractDefinitionDesignator(line: string): string[] {
+    // Pattern: optional whitespace, optional "-", designator, colon
+    // Matches: "X1:", "  X1:", "- X1:"
+    const pattern = /^(\s*(?:-\s*)?)([A-Za-z][A-Za-z0-9_.]*)\s*:/;
+    const match = line.match(pattern);
+    
+    if (match) {
+        return [match[2]]; // Return the designator
+    }
+    
+    return [];
+}
+
+/**
+ * Extracts all designators from a connection set
+ * Example connection set:
+ * connections:
+ *   -
+ *     - X1: [1-4]
+ *     - W1: [1-4]
+ *     - X2: [1-4]
+ */
+function extractConnectionSetDesignators(doc: vscode.TextDocument, lineNumber: number): string[] {
+    const designators: Set<string> = new Set();
+    
+    // Find the start of the connection set (line starting with "-")
+    let startLine = lineNumber;
+    while (startLine >= Math.max(0, lineNumber - 50)) {
+        const line = doc.lineAt(startLine).text.trim();
+        
+        // Found the start of the connection set
+        if (line.startsWith('-') && line !== '-') {
+            break;
+        }
+        
+        // Stop if we hit a non-connection line at top level
+        if (line.length > 0 && 
+            !line.startsWith(' ') && 
+            !line.startsWith('\t') &&
+            !line.startsWith('-')) {
+            return [];
+        }
+        
+        startLine--;
+    }
+    
+    // Collect all lines in this connection set
+    const connectionLines: string[] = [];
+    for (let i = startLine; i < doc.lineCount && i <= lineNumber + 50; i++) {
+        const line = doc.lineAt(i).text;
+        const trimmed = line.trim();
+        
+        // Connection set items start with "-"
+        if (trimmed.startsWith('-') && trimmed !== '-') {
+            connectionLines.push(line);
+        }
+        // Continuation lines (indented)
+        else if (trimmed.length > 0 && (trimmed.startsWith(' ') || trimmed.startsWith('\t'))) {
+            connectionLines.push(line);
+        }
+        // End of connection set (non-indented, non-list line)
+        else if (trimmed.length > 0) {
+            break;
+        }
+    }
+    
+    // Extract designators from all lines
+    // Pattern: optional whitespace, "-", whitespace, designator, colon
+    const pattern = /-\s*([A-Za-z][A-Za-z0-9_.]*)\s*:/g;
+    for (const line of connectionLines) {
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(line)) !== null) {
+            designators.add(match[1]);
+        }
+    }
+    
+    return Array.from(designators);
+}
+
+/**
+ * Attempts to extract designator from any line
+ * Used as fallback when section context is unknown
+ */
+function extractAnyDesignator(line: string): string[] {
+    const designators: string[] = [];
+    
+    // Pattern 1: Direct key at start (with optional list marker)
+    const keyPattern = /^(\s*(?:-\s*)?)([A-Za-z][A-Za-z0-9_.]*)\s*:/;
+    const keyMatch = line.match(keyPattern);
+    if (keyMatch) {
+        designators.push(keyMatch[2]);
+    }
+    
+    // Pattern 2: Designator with pin reference
+    // Matches: "X1: [1-4]" or "W1: [1]"
+    const refPattern = /([A-Za-z][A-Za-z0-9_.]*)\s*:\s*\[/g;
+    let refMatch: RegExpExecArray | null;
+    while ((refMatch = refPattern.exec(line)) !== null) {
+        designators.push(refMatch[1]);
+    }
+    
+    return designators;
+}
+```
+
+---
+
+### Step 3: Update Webview for Highlighting
+
+**File**: `src/extension.ts`
+
+```typescript
+// Update generateBomTableHtml to include data-designators attribute
+function generateBomTableHtml(bomData: BomData): string {
+    if (!bomData || bomData.rows.length === 0) {
+        return '<div class="bom-empty">No BOM data available</div>';
+    }
+    
+    const rowsHtml = bomData.rows.map(row => {
+        // Normalize designators (split by comma, trim whitespace)
+        const normalizedDesignators = (row.Designators || '')
+            .split(',')
+            .map(d => d.trim())
+            .filter(d => d.length > 0)
+            .join(',');
+        
+        return `
+            <tr data-designators="${normalizedDesignators}">
+                <td class="col-id">${escapeHtml(row.Id)}</td>
+                <td class="col-description">${escapeHtml(row.Description)}</td>
+                <td class="col-qty">${escapeHtml(row.Qty)}</td>
+                <td class="col-unit">${escapeHtml(row.Unit)}</td>
+                <td class="col-designators">${escapeHtml(row.Designators)}</td>
+            </tr>
+        `;
+    }).join('');
+    
+    return `
+        <div class="bom-container">
+            <div class="bom-toolbar">
+                <input type="text" id="bom-filter" placeholder="Filter BOM...">
+                <span class="bom-count">${bomData.rows.length} items</span>
+            </div>
+            <table class="bom-table">
+                <thead>
+                    <tr>
+                        <th class="col-id">ID</th>
+                        <th class="col-description">Description</th>
+                        <th class="col-qty">Qty</th>
+                        <th class="col-unit">Unit</th>
+                        <th class="col-designators">Designators</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>
+        <script>
+            // Filtering
+            document.getElementById('bom-filter')?.addEventListener('input', (e) => {
+                const filter = e.target.value.toLowerCase();
+                document.querySelectorAll('.bom-table tbody tr').forEach(row => {
+                    const text = row.textContent.toLowerCase();
+                    row.style.display = text.includes(filter) ? '' : 'none';
+                });
+            });
+            
+            // Highlighting (receive from extension)
+            window.addEventListener('message', event => {
+                const message = event.data;
+                if (message.type === 'highlightDesignators') {
+                    highlightDesignators(message.designators);
+                } else if (message.type === 'clearHighlight') {
+                    clearHighlight();
+                }
+            });
+            
+            function highlightDesignators(designators) {
+                if (!designators || designators.length === 0) {
+                    clearHighlight();
+                    return;
+                }
+                
+                const designatorSet = new Set(designators.map(d => d.trim()));
+                
+                document.querySelectorAll('.bom-table tbody tr').forEach(row => {
+                    const rowDesignators = (row.getAttribute('data-designators') || '')
+                        .split(',')
+                        .map(d => d.trim());
+                    const hasMatch = rowDesignators.some(d => designatorSet.has(d));
+                    
+                    if (hasMatch) {
+                        row.classList.add('highlighted');
+                    } else {
+                        row.classList.remove('highlighted');
+                    }
+                });
+            }
+            
+            function clearHighlight() {
+                document.querySelectorAll('.bom-table tbody tr').forEach(row => {
+                    row.classList.remove('highlighted');
+                });
+            }
+        </script>
+    `;
+}
+```
+
+Add CSS for highlighting:
+
+```typescript
+// Add to ViewPanelCss:
+.bom-table tbody tr.highlighted {
+    background-color: #ffeb3b !important;
+    color: #000 !important;
+    font-weight: bold;
+}
+.bom-table tbody tr.highlighted:hover td {
+    background-color: #ffeb3b !important;
+}
+.bom-table tbody tr.highlighted td {
+    border-bottom-color: #ffeb3b;
+}
+```
+
+---
+
+### Step 4: Update Highlight From Cursor
+
+**File**: `src/extension.ts`
+
+```typescript
 /**
  * Updates BOM highlighting based on current cursor position
  */
@@ -474,109 +483,20 @@ function updateHighlightFromCursor() {
 }
 ```
 
-### Step 5: Update BOM HTML for Highlighting
+---
 
-Add CSS for highlighting in `src/views/bom.html`:
+### Step 5: Handle Webview Messages
 
-```html
-<style>
-    /* Add to existing styles */
-    table.bom-table tbody tr.highlighted {
-        background-color: #ffeb3b !important;
-        color: #000 !important;
-        font-weight: bold;
-    }
-    
-    table.bom-table tbody tr.highlighted:hover td {
-        background-color: #ffeb3b !important;
-    }
-    
-    table.bom-table tbody tr.highlighted td {
-        border-bottom-color: #ffeb3b;
-    }
-</style>
-```
-
-Update the JavaScript in `src/views/bom.html` to handle highlighting:
-
-```javascript
-// In the message handler, add cases:
-switch (message.type) {
-    case 'setBomData':
-        // ... existing code ...
-        break;
-        
-    case 'highlightDesignators':
-        highlightDesignators(message.designators);
-        break;
-        
-    case 'clearHighlight':
-        clearHighlight();
-        break;
-}
-
-// Add these functions:
-function highlightDesignators(designators) {
-    if (!designators || designators.length === 0) {
-        clearHighlight();
-        return;
-    }
-    
-    const designatorSet = new Set(designators.map(d => d.trim()));
-    
-    document.querySelectorAll('#bom-body tr').forEach(row => {
-        const rowDesignators = (row.getAttribute('data-designators') || '').split(',').map(d => d.trim());
-        const hasMatch = rowDesignators.some(d => designatorSet.has(d));
-        
-        if (hasMatch) {
-            row.classList.add('highlighted');
-            // Scroll first matching row into view
-            if (row === document.querySelector('#bom-body tr.highlighted:first-child')) {
-                row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }
-        } else {
-            row.classList.remove('highlighted');
-        }
-    });
-}
-
-function clearHighlight() {
-    document.querySelectorAll('#bom-body tr').forEach(row => {
-        row.classList.remove('highlighted');
-    });
-}
-```
-
-### Step 6: Update BOM Row Data Attributes
-
-Ensure BOM rows have proper designator data attributes:
+**File**: `src/extension.ts`
 
 ```typescript
-// In src/extension.ts, when sending BOM data:
-viewPanel.webview.postMessage({
-    type: 'setBomData',
-    data: currentBomData.rows.map(row => ({
-        ...row,
-        // Ensure Designators is always a string
-        Designators: row.Designators || ''
-    }))
-});
-```
-
-In the BOM HTML table rendering:
-
-```javascript
-// Update the row generation in renderTable:
-const rows = sorted.map(row => {
-    const cells = Object.values(row).map((val, idx) => {
-        const colClass = headers[idx].classList.contains('col-id') ? 'col-id' :
-                       headers[idx].classList.contains('col-description') ? 'col-description' :
-                       headers[idx].classList.contains('col-qty') ? 'col-qty' :
-                       headers[idx].classList.contains('col-unit') ? 'col-unit' : 'col-designators';
-        return `<td class="${colClass}">${escapeHtml(val)}</td>`;
-    }).join('');
-    return `<tr data-designators="${(row.Designators || '').split(',').map(d => d.trim()).join(',')}">${cells}</tr>`;
-});
+// In createOrShowPreviewPanel, set up message handler:
+if (viewPanel) {
+    viewPanel.webview.onDidReceiveMessage(message => {
+        // Handle messages from webview
+        // (Currently no messages from webview for highlighting)
+    });
+}
 ```
 
 ---
@@ -584,18 +504,18 @@ const rows = sorted.map(row => {
 ## Testing Strategy
 
 ### Unit Tests
-- [ ] Designator extraction with redhat-yaml
-- [ ] Designator extraction with regex (fallback)
-- [ ] Single designator extraction
+- [ ] Designator extraction from connector definition
+- [ ] Designator extraction from cable definition
+- [ ] Designator extraction from connection set
 - [ ] Multiple designators from connection set
 - [ ] Edge cases (cursor on whitespace, comments, etc.)
 
 ### Integration Tests
 - [ ] Highlight updates on cursor move
-- [ ] Highlight clears when cursor leaves YAML
+- [ ] Highlight clears when cursor leaves relevant sections
 - [ ] Multiple items highlighted for connection sets
-- [ ] Highlight persists across view toggles
-- [ ] Highlight updates when document changes
+- [ ] Highlighting works with filtering
+- [ ] Highlight persists across view mode changes
 
 ### Edge Cases
 - [ ] Cursor on comment line
@@ -605,6 +525,7 @@ const rows = sorted.map(row => {
 - [ ] Very long designator names
 - [ ] Designators with special characters
 - [ ] Rapid cursor movement
+- [ ] Cursor in nested structures
 
 ---
 
@@ -613,18 +534,16 @@ const rows = sorted.map(row => {
 | Operation | Frequency | Optimization |
 |-----------|-----------|--------------|
 | Cursor move detection | High | Debounced (100ms) |
-| Designator extraction | High | Cached, tiered approach |
+| Designator extraction | High | Cached per line, context-aware |
 | BOM row lookup | High | Use data attributes, Set for O(1) lookup |
 | DOM updates | Medium | Batch updates, minimize reflows |
-| Scroll into view | Low | Only for first match |
 
 ### Optimization Techniques
 
 1. **Debouncing**: Delay highlight updates by 100ms after cursor stops moving
-2. **Caching**: Cache extracted designators for each line
+2. **Caching**: Cache extracted designators per line number
 3. **Efficient Lookup**: Use JavaScript Set for O(1) designator lookups
 4. **Minimal DOM Updates**: Only update classes, not recreate rows
-5. **Selective Scrolling**: Only scroll first matching row into view
 
 ---
 
@@ -633,21 +552,11 @@ const rows = sorted.map(row => {
 - [ ] Single designator highlights correctly
 - [ ] Connection sets highlight all related BOM items
 - [ ] Highlighting updates in real-time (with debounce)
-- [ ] Highlighting works with redhat-yaml (when available)
-- [ ] Highlighting works with regex fallback
+- [ ] Highlighting works with regex extraction
 - [ ] No performance issues with large BOMs
 - [ ] Highlights are visually clear and distinct
 - [ ] Highlights clear when cursor leaves relevant sections
-
----
-
-## Fallback Behavior
-
-If designator extraction fails or returns no results:
-1. Clear all highlights
-2. Log debug message (not error)
-3. Continue normal operation
-4. Retry on next cursor move
+- [ ] Existing Phase 1 and 2 functionality unchanged
 
 ---
 
@@ -672,12 +581,15 @@ Consider adding these configuration options:
 
 ---
 
-## Completion
+## Summary
 
-Once Phase 3 is implemented and tested, the BOM feature will be complete with:
-- Core BOM display with sorting and filtering
-- Toggle between diagram and BOM views
-- Advanced highlighting based on YAML cursor position
-- Support for single and multiple designator highlighting
-- No new dependencies required
-- Optional enhancement with redhat-yaml
+Phase 3 adds **cursor-position-based highlighting** to the BOM table:
+
+1. Tracks cursor position in YAML editor
+2. Extracts designator(s) using regex patterns (no dependencies)
+3. Maps designators to BOM rows via `data-designators` attribute
+4. Highlights matching rows with visual feedback
+5. Handles both single items and connection sets
+6. Includes debouncing for performance
+
+This builds on Phase 1 (BOM display) and Phase 2 (view toggling) without requiring any new dependencies.

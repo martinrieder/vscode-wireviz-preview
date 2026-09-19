@@ -3,312 +3,387 @@
 ---
 
 ## Objective
-Implement a toggle mechanism to switch between diagram and BOM views within the same webview panel.
+Implement a toggle mechanism to switch between different views: diagram-only, BOM-only, or combined view. This builds on Phase 1 which displays both diagram and BOM together.
 
 ---
 
 ## Prerequisites
-- Phase 1: Core BOM Display must be implemented
-- Separate HTML templates for diagram and BOM views exist
+- Phase 1: Core BOM Display must be implemented and working
+- BOM data is being generated and parsed successfully
 
 ---
 
 ## Architecture Overview
 
+### View Options
+1. **Combined View** (default): Diagram + BOM table beneath (Phase 1 behavior)
+2. **Diagram Only**: Just the SVG diagram
+3. **BOM Only**: Just the BOM table
+
 ### View Management Strategy
 - **Single Webview Panel**: One panel instance that switches content
-- **State Tracking**: Track current view (`diagram` or `bom`)
-- **Toggle Command**: `wireviz.toggleBomView` command
-- **Toolbar Button**: Optional button in webview to toggle (future enhancement)
+- **State Tracking**: Track current view mode
+- **Toggle Commands**: Commands to switch between views
+- **Optional**: Separate HTML template files for cleaner code
 
 ### View Switching Flow
 ```
-User Action → Command → Extension → Update State → Update Webview HTML
+User Action → Command → Extension → Update State → Regenerate Webview HTML
 ```
 
 ---
 
 ## Implementation Details
 
-### 1. State Management
+### Step 1: Add View Mode Type and State
 
-In `src/extension.ts`, add state variables:
+**File**: `src/extension.ts`
 
 ```typescript
-// Track current view state
-let currentView: 'diagram' | 'bom' = 'diagram';
+// Add type for view modes
+type ViewMode = 'combined' | 'diagram' | 'bom';
 
-// Track the last rendered data for each view
-let lastDiagramFile: string | null = null;
-let lastBomData: BomData | null = null;
+// Add state variable
+let currentViewMode: ViewMode = 'combined'; // Default to Phase 1 behavior
 ```
 
-### 2. View Switching Logic
+---
 
-Add comprehensive view switching functions:
+### Step 2: Add View Toggle Commands
 
-```typescript
-/**
- * Shows the current view based on state
- */
-function showCurrentView(doc: TextDocument) {
-    if (!viewPanel) return;
-    
-    if (currentView === 'diagram') {
-        showDiagramView(doc);
-    } else {
-        showBomView();
-    }
-}
-
-/**
- * Switches to diagram view
- */
-function showDiagramView(doc: TextDocument) {
-    if (!viewPanel) return;
-    
-    currentView = 'diagram';
-    
-    const cfgArgs = getArgsFromConfig(doc.fileName);
-    const outFile = getOutputFileFullpath(doc.fileName, cfgArgs);
-    
-    // Only re-render if file changed
-    if (outFile !== lastDiagramFile) {
-        showImg(outFile);
-        lastDiagramFile = outFile;
-    }
-}
-
-/**
- * Switches to BOM view
- */
-function showBomView() {
-    if (!viewPanel) return;
-    
-    currentView = 'bom';
-    
-    // Only re-render if BOM data changed
-    if (lastBomData !== currentBomData) {
-        renderBomView();
-        lastBomData = currentBomData;
-    }
-}
-
-/**
- * Renders the BOM view with current data
- */
-function renderBomView() {
-    if (!viewPanel) return;
-    
-    const bomHtmlPath = path.join(__dirname, 'views', 'bom.html');
-    let bomHtml = fs.readFileSync(bomHtmlPath, 'utf8');
-    
-    viewPanel.webview.html = bomHtml;
-    
-    // Send BOM data to webview
-    viewPanel.webview.postMessage({
-        type: 'setBomData',
-        data: currentBomData.rows
-    });
-}
-```
-
-### 3. Enhanced Toggle Command
-
-Update the toggle command to handle edge cases:
+**File**: `src/extension.ts`
 
 ```typescript
-async function toggleBomView() {
+// In activate function, add commands:
+export async function activate(context: vscode.ExtensionContext) {
+    context.subscriptions.push(
+        vscode.commands.registerCommand("wireviz.showPreview", async() => await showPreview()),
+        vscode.commands.registerCommand("wireviz.showDiagram", async() => setViewMode('diagram')),
+        vscode.commands.registerCommand("wireviz.showBom", async() => setViewMode('bom')),
+        vscode.commands.registerCommand("wireviz.showCombined", async() => setViewMode('combined')),
+        vscode.commands.registerCommand("wireviz.toggleView", async() => toggleViewMode()),
+        vscode.workspace.onDidSaveTextDocument(onDocumentSaved)
+    );
+}
+
+/**
+ * Sets the view mode and refreshes the display
+ */
+function setViewMode(mode: ViewMode) {
+    currentViewMode = mode;
     const doc = window.activeTextEditor?.document;
-    
-    if (!doc) {
-        window.showWarningMessage('No active document to toggle BOM view for.');
-        return;
-    }
-    
-    if (!viewPanel) {
-        // If no panel exists, create it and show BOM
-        await showPreview();
-        if (viewPanel) {
-            currentView = 'bom';
-            renderBomView();
-        }
-        return;
-    }
-    
-    // Check if current document is WireViz YAML
-    if (!isWirevizYamlFile(doc)) {
-        window.showWarningMessage('Current document is not a WireViz YAML file.');
-        return;
-    }
-    
-    // Toggle the view
-    currentView = currentView === 'diagram' ? 'bom' : 'diagram';
-    showCurrentView(doc);
-}
-```
-
-### 4. Update showPreview Function
-
-Modify `showPreview` to respect current view state:
-
-```typescript
-async function showPreview() {
-    if (isRunning) {
-        return;
-    }
-    isRunning = true;
-
-    try {
-        const doc = window.activeTextEditor?.document;
-        
-        if (!doc || !isWirevizYamlFile(doc)) {
-            show(MsgType.Err, "Not a WireViz YAML");
-            return;
-        }
-
-        if (await isAnyWirevizError()) {
-            return;
-        }
-
-        createOrShowPreviewPanel(doc, "");
-        show(MsgType.Info, "Generating diagram...");
-
-        if (doc.isDirty) {
-            doc.save();
-        }
-
+    if (doc && viewPanel) {
         const cfgArgs = getArgsFromConfig(doc.fileName);
-        const wvArgs = getWvCmdlineArgs(doc.fileName, cfgArgs);
         const outFile = getOutputFileFullpath(doc.fileName, cfgArgs);
-        const bomFile = getBomFileFullpath(doc.fileName, cfgArgs);
-        
-        createOrShowPreviewPanel(doc, cfgArgs.outputDir);
-
-        try {
-            show(MsgType.Debug, "wireviz ".concat(wvArgs.join(" ")));
-            const process = await aspawn("wireviz", wvArgs);
-            
-            // Read and parse BOM data
-            try {
-                const bomContent = await fs.promises.readFile(bomFile, 'utf8');
-                currentBomData = parseBomTsv(bomContent);
-                lastBomData = currentBomData;
-            } catch (bomError) {
-                console.warn('Could not read BOM file:', bomError);
-                currentBomData = { headers: [], rows: [] };
-                lastBomData = currentBomData;
-            }
-            
-            // Update last diagram file
-            lastDiagramFile = outFile;
-            
-            // Show the current view
-            showCurrentView(doc);
-            
-        } catch (e: any) {
-            if (e.stderr) {
-                show(MsgType.Err, e.stderr.toString());
-            } else if (e) {
-                show(MsgType.Err, `${e.name}${e.message}`);
-            }
-        }
-    } finally {
-        isRunning = false;
+        showCurrentView(outFile);
     }
 }
-```
 
-### 5. Add Keyboard Shortcut (Optional)
-
-Add to `package.json`:
-
-```json
-{
-    "keybindings": [
-        {
-            "key": "f8",
-            "command": "wireviz.showPreview",
-            "when": "editorTextFocus && resourceLangId == yaml"
-        },
-        {
-            "key": "ctrl+alt+b",
-            "command": "wireviz.toggleBomView",
-            "when": "editorTextFocus && resourceLangId == yaml"
-        }
-    ]
-}
-```
-
-### 6. Update Webview Toolbar (Optional Enhancement)
-
-Add a toggle button in the BOM view HTML:
-
-```html
-<!-- In bom.html, add to toolbar -->
-<div class="bom-toolbar">
-    <button id="bom-toggle-view" title="Switch to Diagram View">
-        <svg width="16" height="16" viewBox="0 0 16 16">
-            <path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2zm4.5 6.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-3z"/>
-        </svg>
-    </button>
-    <input type="text" id="bom-filter" placeholder="Filter (Ctrl+F)">
-    <button id="bom-clear-filter" title="Clear filter">×</button>
-</div>
-```
-
-```javascript
-// In bom.html script, add event listener
-document.getElementById('bom-toggle-view')?.addEventListener('click', () => {
-    vscode.postMessage({ type: 'toggleView' });
-});
-```
-
-In extension.ts, handle the message:
-
-```typescript
-// In viewPanel.webview.onDidReceiveMessage
-if (message.type === 'toggleView') {
-    toggleBomView();
+/**
+ * Toggles between view modes
+ */
+function toggleViewMode() {
+    const modes: ViewMode[] = ['combined', 'diagram', 'bom'];
+    const currentIndex = modes.indexOf(currentViewMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    setViewMode(modes[nextIndex]);
 }
 ```
 
 ---
 
+### Step 3: Update showImg to Respect View Mode
+
+**File**: `src/extension.ts`
+
+```typescript
+// Replace showImg with view-mode-aware function
+function showCurrentView(imgFileName: string) {
+    if (!viewPanel) return;
+    
+    const uri = Uri.file(imgFileName);
+    const webviewUri = viewPanel.webview.asWebviewUri(uri);
+    
+    switch (currentViewMode) {
+        case 'diagram':
+            viewPanel.webview.html = `
+                <html><head>${ViewPanelCss}</head><body>
+                    <figure>
+                        <img src="${webviewUri}" alt="Diagram">
+                        <figcaption>${imgFileName}</figcaption>
+                    </figure>
+                </body></html>`;
+            break;
+            
+        case 'bom':
+            viewPanel.webview.html = `
+                <html><head>${ViewPanelCss}</head><body>
+                    ${generateBomTableHtml(currentBomData)}
+                </body></html>`;
+            break;
+            
+        case 'combined':
+        default:
+            viewPanel.webview.html = `
+                <html><head>${ViewPanelCss}</head><body>
+                    <figure>
+                        <img src="${webviewUri}" alt="Diagram">
+                        <figcaption>${imgFileName}</figcaption>
+                    </figure>
+                    ${generateBomTableHtml(currentBomData)}
+                </body></html>`;
+            break;
+    }
+}
+
+// Update showPreview to use showCurrentView instead of showImg
+// In showPreview function:
+// Change: showImg(outFile);
+// To:     showCurrentView(outFile);
+```
+
+---
+
+### Step 4: Add View Mode Indicator (Optional)
+
+**File**: `src/extension.ts`
+
+```typescript
+// Update showCurrentView to include view mode indicator
+function showCurrentView(imgFileName: string) {
+    if (!viewPanel) return;
+    
+    const uri = Uri.file(imgFileName);
+    const webviewUri = viewPanel.webview.asWebviewUri(uri);
+    
+    // View mode label
+    const viewModeLabel = `
+        <div class="view-mode-indicator">
+            View: <strong>${currentViewMode}</strong>
+            <button onclick="toggleView()" class="view-toggle-btn">Toggle</button>
+        </div>
+    `;
+    
+    switch (currentViewMode) {
+        case 'diagram':
+            viewPanel.webview.html = `
+                <html><head>${ViewPanelCss}</head><body>
+                    ${viewModeLabel}
+                    <figure>
+                        <img src="${webviewUri}" alt="Diagram">
+                        <figcaption>${imgFileName}</figcaption>
+                    </figure>
+                </body></html>`;
+            break;
+            
+        case 'bom':
+            viewPanel.webview.html = `
+                <html><head>${ViewPanelCss}</head><body>
+                    ${viewModeLabel}
+                    ${generateBomTableHtml(currentBomData)}
+                </body></html>`;
+            break;
+            
+        case 'combined':
+        default:
+            viewPanel.webview.html = `
+                <html><head>${ViewPanelCss}</head><body>
+                    ${viewModeLabel}
+                    <figure>
+                        <img src="${webviewUri}" alt="Diagram">
+                        <figcaption>${imgFileName}</figcaption>
+                    </figure>
+                    ${generateBomTableHtml(currentBomData)}
+                </body></html>`;
+            break;
+    }
+}
+```
+
+Add CSS for view mode indicator:
+
+```typescript
+// Add to ViewPanelCss:
+.view-mode-indicator {
+    padding: 8px 0;
+    color: #888;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid #444;
+    margin-bottom: 10px;
+}
+.view-mode-indicator strong {
+    color: #ccc;
+}
+.view-toggle-btn {
+    padding: 2px 8px;
+    border: 1px solid #666;
+    border-radius: 3px;
+    background-color: #333;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 11px;
+}
+.view-toggle-btn:hover {
+    background-color: #007acc;
+    border-color: #007acc;
+}
+```
+
+Add JavaScript to webview for toggle button:
+
+```typescript
+// In showCurrentView, add script to HTML:
+const toggleScript = `
+    <script>
+        function toggleView() {
+            const vscode = acquireVsCodeApi();
+            vscode.postMessage({ type: 'toggleView' });
+        }
+    </script>
+`;
+
+// Then in viewPanel.webview.html, include toggleScript
+```
+
+---
+
+### Step 5: Handle Webview Messages
+
+**File**: `src/extension.ts`
+
+```typescript
+// Set up webview message handler
+viewPanel.webview.onDidReceiveMessage(message => {
+    switch (message.type) {
+        case 'toggleView':
+            toggleViewMode();
+            break;
+    }
+});
+```
+
+---
+
+### Step 6: Update Package.json
+
+Add new commands to `package.json`:
+
+```json
+{
+    "contributes": {
+        "commands": [
+            {
+                "command": "wireviz.showPreview",
+                "title": "WireViz: Preview"
+            },
+            {
+                "command": "wireviz.showDiagram",
+                "title": "WireViz: Show Diagram Only"
+            },
+            {
+                "command": "wireviz.showBom",
+                "title": "WireViz: Show BOM Only"
+            },
+            {
+                "command": "wireviz.showCombined",
+                "title": "WireViz: Show Combined View"
+            },
+            {
+                "command": "wireviz.toggleView",
+                "title": "WireViz: Toggle View"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "when": "resourceLangId == yaml",
+                    "command": "wireviz.showPreview",
+                    "group": "navigation"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "wireviz.showDiagram",
+                    "when": "editorTextFocus && resourceLangId == yaml"
+                },
+                {
+                    "command": "wireviz.showBom",
+                    "when": "editorTextFocus && resourceLangId == yaml"
+                },
+                {
+                    "command": "wireviz.showCombined",
+                    "when": "editorTextFocus && resourceLangId == yaml"
+                },
+                {
+                    "command": "wireviz.toggleView",
+                    "when": "editorTextFocus && resourceLangId == yaml"
+                }
+            ]
+        }
+    }
+}
+```
+
+---
+
+### Step 7: Optional - Extract HTML Templates (Cleanup)
+
+**Files**: Create `src/views/diagram.html`, `src/views/bom.html`, `src/views/combined.html`
+
+This step is optional but recommended for better code organization. Move the HTML generation logic from `extension.ts` into separate template files.
+
+---
+
 ## User Experience Considerations
 
-### View State Persistence
-- [ ] Remember last view state per document
-- [ ] Restore view state when reopening preview
-- [ ] Consider workspace-level preference for default view
+### View State Persistence (Optional Enhancement)
+```typescript
+// Save view mode preference
+const VIEW_MODE_KEY = 'wireviz.viewMode';
+
+// Load saved preference
+currentViewMode = (context.workspaceState.get(VIEW_MODE_KEY) as ViewMode) || 'combined';
+
+// Save when changed
+function setViewMode(mode: ViewMode) {
+    currentViewMode = mode;
+    context.workspaceState.update(VIEW_MODE_KEY, mode);
+    // ... refresh display ...
+}
+```
 
 ### Visual Feedback
-- [ ] Show current view in panel title
-- [ ] Add visual indicator of current view in toolbar
-- [ ] Smooth transition between views
+- Show current view mode in panel title
+- Add visual indicator of current view
+- Smooth transitions between views
 
 ### Error Handling
-- [ ] Handle missing BOM file gracefully
-- [ ] Show fallback message when BOM is empty
-- [ ] Preserve diagram view if BOM generation fails
+- Handle missing BOM file gracefully (fall back to diagram-only)
+- Show fallback message when BOM is empty
+- Preserve existing functionality
 
 ---
 
 ## Testing Strategy
 
 ### Functional Tests
-- [ ] Toggle from diagram to BOM
-- [ ] Toggle from BOM to diagram
+- [ ] Toggle from combined to diagram-only
+- [ ] Toggle from diagram-only to BOM-only
+- [ ] Toggle from BOM-only to combined
+- [ ] Toggle cycles through all modes
+- [ ] Direct commands work for each view
 - [ ] Toggle when no preview exists
 - [ ] Toggle with non-WireViz file
 - [ ] Toggle with missing BOM file
-- [ ] Toggle preserves filter/sort state
 
 ### UI Tests
 - [ ] View transitions are smooth
 - [ ] Panel title updates correctly
-- [ ] Toolbar buttons work
-- [ ] Keyboard shortcut works
+- [ ] View mode indicator visible and accurate
+- [ ] Toggle button works
 
 ### Edge Cases
 - [ ] Rapid toggling
@@ -320,12 +395,25 @@ if (message.type === 'toggleView') {
 
 ## Success Criteria
 
-- [ ] Toggle command works reliably
-- [ ] View state is preserved correctly
-- [ ] Transitions are smooth and responsive
+- [ ] All view modes display correctly
+- [ ] Toggle command cycles through all modes
+- [ ] Direct view commands work
+- [ ] View mode persists across preview refreshes (optional)
 - [ ] Error cases handled gracefully
 - [ ] No memory leaks from repeated toggling
-- [ ] Works with keyboard shortcut
+- [ ] Existing Phase 1 functionality unchanged
+
+---
+
+## What Was Moved from Phase 1
+
+The following items were **moved from Phase 1 to Phase 2**:
+
+- ✅ Separate HTML template files (`diagram.html`, `bom.html`)
+- ✅ Toggle command and view switching logic
+- ✅ View state persistence
+- ✅ Column sorting (beyond basic filtering)
+- ✅ Enhanced TSV parsing with quoted fields
 
 ---
 
