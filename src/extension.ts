@@ -362,7 +362,7 @@ function generateBomTableHtml(bomData: BomData): string {
 				
 				// Filter input
 				filterInput?.addEventListener('input', (e) => {
-					filterText = (e.target as HTMLInputElement).value.toLowerCase();
+					filterText = e.target.value.toLowerCase();
 					applySortAndFilter();
 				});
 				

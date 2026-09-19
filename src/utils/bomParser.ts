@@ -27,7 +27,7 @@ export function parseBomTsv(tsvContent: string): BomData {
 	}
 	
 	// Parse header row
-	const headers = parseTsvLine(nonEmptyLines[0]);
+	const headers = parseTsvLine(nonEmptyLines[0].replace(/\r$/, ''));
 	
 	// If there's only a header row, return it with empty rows
 	if (nonEmptyLines.length === 1) {
@@ -37,7 +37,7 @@ export function parseBomTsv(tsvContent: string): BomData {
 	// Parse data rows
 	const rows: BomRow[] = [];
 	for (let i = 1; i < nonEmptyLines.length; i++) {
-		const values = parseTsvLine(nonEmptyLines[i]);
+		const values = parseTsvLine(nonEmptyLines[i].replace(/\r$/, ''));
 		
 		// Ensure we have enough values
 		while (values.length < headers.length) {
