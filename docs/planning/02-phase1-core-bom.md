@@ -3,7 +3,7 @@
 ---
 
 ## Objective
-Implement the core Bill of Materials display functionality with table view, basic sorting, and filtering capabilities. Display BOM table **beneath** the diagram in the same webview panel.
+Implement the core Bill of Materials display functionality with table view, **column sorting**, and **filtering** capabilities. Display BOM table **beneath** the diagram in the same webview panel.
 
 ---
 
@@ -14,14 +14,17 @@ Implement the core Bill of Materials display functionality with table view, basi
 - **Single combined view**: Show diagram AND BOM table together (no toggling)
 - **Minimal code changes**: Only modify what's necessary
 - **No new dependencies**: Use existing extension infrastructure
+- **Enhanced features**: Include column sorting and filtering from original plan
 
 ### What Changes Are Required
 
-Only **3 minimal changes** to existing code:
+**5 changes** to existing code:
 
 1. **Output format**: Add `t` flag to generate TSV output
 2. **BOM file path helper**: Function to locate `.bom.tsv` file
-3. **Display integration**: Modify webview HTML to include BOM table beneath diagram
+3. **BOM parser utility**: Parse TSV with support for quoted fields and escaping
+4. **Display integration**: Modify webview HTML to include BOM table beneath diagram
+5. **Enhanced table**: Add column sorting and filtering JavaScript
 
 ---
 
@@ -133,6 +136,7 @@ export interface BomData {
 
 /**
  * Parses TSV content into BOM data structure
+ * Handles quoted fields, escaped characters, and multi-line values
  */
 export function parseBomTsv(tsvContent: string): BomData {
     const lines = tsvContent.split('\n');
@@ -143,12 +147,12 @@ export function parseBomTsv(tsvContent: string): BomData {
     }
     
     // Parse header row
-    const headers = nonEmptyLines[0].split('\t').map(h => h.trim());
+    const headers = parseTsvLine(nonEmptyLines[0]);
     
     // Parse data rows
     const rows: BomRow[] = [];
     for (let i = 1; i < nonEmptyLines.length; i++) {
-        const values = nonEmptyLines[i].split('\t');
+        const values = parseTsvLine(nonEmptyLines[i]);
         
         // Ensure we have enough values
         while (values.length < headers.length) {
@@ -171,9 +175,62 @@ export function parseBomTsv(tsvContent: string): BomData {
     
     return { headers, rows };
 }
+
+/**
+ * Parses a single TSV line, handling quoted fields and escaped characters
+ */
+function parseTsvLine(line: string): string[] {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    let escapeNext = false;
+    
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        
+        if (escapeNext) {
+            current += char;
+            escapeNext = false;
+            continue;
+        }
+        
+        if (char === '\\') {
+            escapeNext = true;
+            continue;
+        }
+        
+        if (inQuotes) {
+            if (char === '"') {
+                // Check if this is an escaped quote or end of quoted field
+                if (i + 1 < line.length && line[i + 1] === '"') {
+                    current += '"';
+                    i++; // Skip next quote
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                current += char;
+            }
+        } else {
+            if (char === '"') {
+                inQuotes = true;
+            } else if (char === '\t') {
+                values.push(current);
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+    }
+    
+    // Add the last field
+    values.push(current);
+    
+    return values;
+}
 ```
 
-**Note**: Simple TSV parsing - splits by tabs. Handles basic cases. Can be enhanced later for edge cases.
+**Note**: Enhanced TSV parsing handles quoted fields with tabs and escaped characters.
 
 ---
 
@@ -213,7 +270,7 @@ try {
 
 ---
 
-### Step 5: Modify showImg to Display BOM
+### Step 5: Modify showImg to Display BOM with Sorting and Filtering
 
 **File**: `src/extension.ts`
 
@@ -225,7 +282,7 @@ function showImg(imgFileName: string) {
         const uri = Uri.file(imgFileName);
         const webviewUri = viewPanel.webview.asWebviewUri(uri);
         
-        // Generate BOM table HTML
+        // Generate BOM table HTML with sorting and filtering
         const bomTableHtml = generateBomTableHtml(currentBomData);
         
         viewPanel.webview.html = `
@@ -240,7 +297,7 @@ function showImg(imgFileName: string) {
 }
 
 /**
- * Generates HTML for BOM table with sorting and filtering
+ * Generates HTML for BOM table with column sorting and filtering
  */
 function generateBomTableHtml(bomData: BomData): string {
     if (!bomData || bomData.rows.length === 0) {
@@ -248,8 +305,15 @@ function generateBomTableHtml(bomData: BomData): string {
     }
     
     const rowsHtml = bomData.rows.map(row => {
+        // Normalize designators for data attribute
+        const normalizedDesignators = (row.Designators || '')
+            .split(',')
+            .map(d => d.trim())
+            .filter(d => d.length > 0)
+            .join(',');
+        
         return `
-            <tr data-designators="${row.Designators}">
+            <tr data-designators="${normalizedDesignators}">
                 <td class="col-id">${escapeHtml(row.Id)}</td>
                 <td class="col-description">${escapeHtml(row.Description)}</td>
                 <td class="col-qty">${escapeHtml(row.Qty)}</td>
@@ -263,30 +327,116 @@ function generateBomTableHtml(bomData: BomData): string {
         <div class="bom-container">
             <div class="bom-toolbar">
                 <input type="text" id="bom-filter" placeholder="Filter BOM...">
+                <button id="bom-clear-filter" title="Clear filter">\u00d7</button>
                 <span class="bom-count">${bomData.rows.length} items</span>
             </div>
             <table class="bom-table">
                 <thead>
                     <tr>
-                        <th class="col-id">ID</th>
-                        <th class="col-description">Description</th>
-                        <th class="col-qty">Qty</th>
-                        <th class="col-unit">Unit</th>
-                        <th class="col-designators">Designators</th>
+                        <th class="col-id" data-col="0">ID \u2191</th>
+                        <th class="col-description" data-col="1">Description \u2191</th>
+                        <th class="col-qty" data-col="2">Qty \u2191</th>
+                        <th class="col-unit" data-col="3">Unit \u2191</th>
+                        <th class="col-designators" data-col="4">Designators \u2191</th>
                     </tr>
                 </thead>
                 <tbody>${rowsHtml}</tbody>
             </table>
         </div>
         <script>
-            // Simple filtering
-            document.getElementById('bom-filter')?.addEventListener('input', (e) => {
-                const filter = e.target.value.toLowerCase();
-                document.querySelectorAll('.bom-table tbody tr').forEach(row => {
-                    const text = row.textContent.toLowerCase();
-                    row.style.display = text.includes(filter) ? '' : 'none';
+            (function() {
+                'use strict';
+                
+                // State for sorting
+                let sortColumn = 0;
+                let sortDirection = 1; // 1 = asc, -1 = desc
+                let filterText = '';
+                
+                const bomBody = document.querySelector('.bom-table tbody');
+                const filterInput = document.getElementById('bom-filter');
+                const clearFilterBtn = document.getElementById('bom-clear-filter');
+                const headers = document.querySelectorAll('.bom-table th');
+                const summaryEl = document.querySelector('.bom-count');
+                
+                // Store original row data
+                const originalRows = Array.from(bomBody?.querySelectorAll('tr') || []);
+                
+                // Filter input
+                filterInput?.addEventListener('input', (e) => {
+                    filterText = (e.target as HTMLInputElement).value.toLowerCase();
+                    applySortAndFilter();
                 });
-            });
+                
+                // Clear filter button
+                clearFilterBtn?.addEventListener('click', () => {
+                    if (filterInput) {
+                        filterInput.value = '';
+                        filterText = '';
+                        applySortAndFilter();
+                    }
+                });
+                
+                // Column header clicks for sorting
+                headers.forEach((th, index) => {
+                    th.addEventListener('click', () => {
+                        if (sortColumn === index) {
+                            sortDirection *= -1; // Toggle direction
+                        } else {
+                            sortColumn = index;
+                            sortDirection = 1;
+                        }
+                        applySortAndFilter();
+                        updateHeaderIndicators();
+                    });
+                });
+                
+                // Apply current sort and filter
+                function applySortAndFilter() {
+                    if (!bomBody || !originalRows.length) return;
+                    
+                    const rows = originalRows.filter(row => {
+                        if (!filterText) return true;
+                        return row.textContent.toLowerCase().includes(filterText);
+                    });
+                    
+                    const sorted = [...rows].sort((a, b) => {
+                        const aVal = a.querySelector(`td:nth-child(${sortColumn + 1})`)?.textContent || '';
+                        const bVal = b.querySelector(`td:nth-child(${sortColumn + 1})`)?.textContent || '';
+                        
+                        // Numeric sort for Qty column (index 2)
+                        if (sortColumn === 2) {
+                            const aNum = parseFloat(aVal) || 0;
+                            const bNum = parseFloat(bVal) || 0;
+                            return (aNum - bNum) * sortDirection;
+                        }
+                        
+                        // String sort for others
+                        return aVal.localeCompare(bVal) * sortDirection;
+                    });
+                    
+                    // Clear and re-append sorted/filtered rows
+                    bomBody.innerHTML = '';
+                    sorted.forEach(row => bomBody.appendChild(row.cloneNode(true)));
+                    
+                    // Update count
+                    if (summaryEl) {
+                        summaryEl.textContent = `${rows.length} of ${originalRows.length} items`;
+                    }
+                }
+                
+                // Update header UI to show sort indicators
+                function updateHeaderIndicators() {
+                    headers.forEach((h, idx) => {
+                        const indicator = sortColumn === idx 
+                            ? (sortDirection === 1 ? '\u2191' : '\u2193') 
+                            : '\u2191';
+                        h.innerHTML = h.textContent.replace(/[\u2191\u2193]/g, '') + ' ' + indicator;
+                    });
+                }
+                
+                // Initial render
+                applySortAndFilter();
+            })();
         </script>
     `;
 }
@@ -358,6 +508,18 @@ const ViewPanelCss = `
         outline: none;
         border-color: #007acc;
     }
+    .bom-toolbar button {
+        padding: 4px 8px;
+        border: 1px solid #666;
+        border-radius: 3px;
+        background-color: #333;
+        color: #ccc;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .bom-toolbar button:hover {
+        background-color: #444;
+    }
     .bom-count {
         color: #888;
         font-size: 11px;
@@ -373,6 +535,11 @@ const ViewPanelCss = `
         padding: 6px 8px;
         text-align: left;
         border-bottom: 2px solid #007acc;
+        cursor: pointer;
+        user-select: none;
+    }
+    .bom-table th:hover {
+        background-color: #2d2d30;
     }
     .bom-table td {
         padding: 4px 8px;
@@ -400,32 +567,41 @@ const ViewPanelCss = `
 
 ---
 
-## What Was Removed (Moved to Phase 2)
+## What Was Removed (Moved to Later Phases)
 
-The following items were **removed** from Phase 1 and moved to Phase 2:
+The following items were **moved to Phase 2 and Phase 3**:
 
-- ✗ Separate HTML template files (`diagram.html`, `bom.html`)
-- ✗ Toggle command and view switching logic
-- ✗ View state persistence
-- ✗ Sorting by column click (kept simple filtering only)
-- ✗ Complex TSV parsing with quoted fields
+- ✅ **Separate HTML template files** (`diagram.html`, `bom.html`) → Phase 2
+- ✅ **Toggle command and view switching logic** → Phase 2
+- ✅ **View state persistence** → Phase 2
+- ✅ **Cursor tracking and highlighting** → Phase 3
+- ✅ **Regex designator extraction** → Phase 3
 
 ---
 
-## Minimal Implementation Summary
+## Implementation Summary
 
 ### Files Modified
 | File | Changes |
 |------|---------|
-| `src/extension.ts` | 1. Add 't' to output formats, 2. Add BOM file helper, 3. Read BOM data, 4. Update showImg with BOM table, 5. Add CSS |
+| `src/extension.ts` | 1. Add 't' to output formats, 2. Add BOM file helper, 3. Read BOM data, 4. Update showImg with BOM table, 5. Add CSS, 6. Add sorting/filtering JS |
 
 ### Files Added
 | File | Purpose |
 |------|---------|
-| `src/utils/bomParser.ts` | TSV parsing utility |
+| `src/utils/bomParser.ts` | TSV parsing utility with quoted field support |
+
+### Features Included
+- ✅ BOM generation via WireViz CLI
+- ✅ BOM table display beneath diagram
+- ✅ **Column sorting** (click headers to sort)
+- ✅ **Filtering** (text input with clear button)
+- ✅ Enhanced TSV parsing (quoted fields, escaping)
+- ✅ Visual sort indicators
+- ✅ Item count display
 
 ### Total Lines Changed
-- ~50-100 lines of code
+- ~100-150 lines of code
 - No architectural changes
 - No new dependencies
 - No breaking changes
@@ -436,12 +612,19 @@ The following items were **removed** from Phase 1 and moved to Phase 2:
 
 ### Unit Tests
 - [ ] TSV parsing with normal data
+- [ ] TSV parsing with quoted fields containing tabs
+- [ ] TSV parsing with escaped characters
 - [ ] TSV parsing with empty file
 - [ ] TSV parsing with missing columns
 
 ### Integration Tests
 - [ ] BOM view displays beneath diagram
+- [ ] Column sorting works for all columns
+- [ ] Numeric sorting for Qty column
+- [ ] String sorting for other columns
 - [ ] Filtering works via input field
+- [ ] Clear filter button works
+- [ ] Combined sort + filter works
 - [ ] BOM data persists across refreshes
 - [ ] Error handling for missing BOM file
 
@@ -451,6 +634,7 @@ The following items were **removed** from Phase 1 and moved to Phase 2:
 - [ ] Missing BOM file
 - [ ] Very large BOM (1000+ rows)
 - [ ] Special characters in descriptions
+- [ ] Unicode characters in descriptions
 
 ---
 
@@ -458,7 +642,9 @@ The following items were **removed** from Phase 1 and moved to Phase 2:
 
 - [ ] WireViz generates both SVG and TSV files
 - [ ] BOM table displays correctly beneath diagram with all columns
-- [ ] Basic filtering works via text input
+- [ ] **Column sorting works by clicking headers**
+- [ ] **Filtering works via text input**
+- [ ] **Sort indicators visible and accurate**
 - [ ] No errors in console
 - [ ] Performance acceptable with typical BOM sizes
 - [ ] Existing diagram functionality unchanged
@@ -467,7 +653,6 @@ The following items were **removed** from Phase 1 and moved to Phase 2:
 
 ## Next Phase
 Once Phase 1 is complete and tested, proceed to [Phase 2: View Toggle](./03-phase2-view-toggle.md) for:
-- Toggle between diagram-only and BOM-only views
-- Separate HTML template files
-- Column sorting
-- Enhanced TSV parsing
+- Toggle between diagram-only, BOM-only, or combined views
+- Separate HTML template files (optional cleanup)
+- View state persistence
